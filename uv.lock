@@ -7,6 +7,13 @@ resolution-markers = [
     "python_full_version < '3.10'",
 ]
 
+[manifest]
+members = [
+    "bioformats",
+    "bioformats-bsd",
+    "bioformats-root",
+]
+
 [[package]]
 name = "annotated-types"
 version = "0.7.0"
@@ -26,8 +33,18 @@ wheels = [
 ]
 
 [[package]]
-name = "bffile"
-source = { editable = "." }
+name = "bioformats"
+source = { editable = "packages/bioformats" }
+dependencies = [
+    { name = "bioformats-bsd" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bioformats-bsd", editable = "packages/bioformats-bsd" }]
+
+[[package]]
+name = "bioformats-bsd"
+source = { editable = "packages/bioformats-bsd" }
 dependencies = [
     { name = "dask", version = "2024.8.0", source = { registry = "https://pypi.org/simple" }, extra = ["array"], marker = "python_full_version < '3.10'" },
     { name = "dask", version = "2025.3.0", source = { registry = "https://pypi.org/simple" }, extra = ["array"], marker = "python_full_version >= '3.10'" },
@@ -38,8 +55,22 @@ dependencies = [
     { name = "scyjava" },
 ]
 
+[package.metadata]
+requires-dist = [
+    { name = "dask", extras = ["array"], specifier = ">=2024.8.0" },
+    { name = "numpy", specifier = ">=2.0.2" },
+    { name = "ome-types", specifier = ">=0.6.1" },
+    { name = "resource-backed-dask-array", specifier = ">=0.1.0" },
+    { name = "scyjava", specifier = ">=1.10.2" },
+]
+
+[[package]]
+name = "bioformats-root"
+source = { virtual = "." }
+
 [package.dev-dependencies]
 dev = [
+    { name = "bioformats" },
     { name = "ipython", version = "8.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "ipython", version = "8.35.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
     { name = "ipython", version = "9.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -60,16 +91,10 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "dask", extras = ["array"], specifier = ">=2024.8.0" },
-    { name = "numpy", specifier = ">=2.0.2" },
-    { name = "ome-types", specifier = ">=0.6.1" },
-    { name = "resource-backed-dask-array", specifier = ">=0.1.0" },
-    { name = "scyjava", specifier = ">=1.10.2" },
-]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "bioformats", editable = "packages/bioformats" },
     { name = "ipython", specifier = ">=8.18.1" },
     { name = "mypy", specifier = ">=1.15.0" },
     { name = "pdbpp", marker = "sys_platform != 'win32'", specifier = ">=0.11.6" },

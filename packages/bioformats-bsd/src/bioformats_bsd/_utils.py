@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from ome_types import OME
 
 
-log = logging.getLogger("bffile")
+log = logging.getLogger("bioformats")
 
 
 class PhysicalPixelSizes(NamedTuple):

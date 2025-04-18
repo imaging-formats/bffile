@@ -12,7 +12,7 @@ import numpy as np
 import scyjava
 import scyjava.config
 
-MAVEN_COORDINATE = "ome:formats-gpl:RELEASE"
+MAVEN_COORDINATE = "ome:formats-bsd:RELEASE"
 
 # Check if the BIOFORMATS_VERSION environment variable is set
 # and if so, use it as the Maven coordinate
@@ -20,7 +20,7 @@ if (coord := os.getenv("BIOFORMATS_VERSION", None)) is not None:
     # allow a single version number to be passed
     if ":" not in coord and all(x.isdigit() for x in coord.split(".")):
         # if the coordinate is just a version number, use the default group and artifact
-        coord = f"ome:formats-gpl:{coord}"
+        coord = f"ome:formats-bsd:{coord}"
 
     # ensure the coordinate is valid
     if 2 > len(coord.split(":")) > 5:
@@ -41,7 +41,7 @@ scyjava.config.endpoints.append("ch.qos.logback:logback-classic:1.3.15")
 
 # python-side logger
 
-LOGGER = logging.getLogger("bffile")
+LOGGER = logging.getLogger("bioformats")
 fmt = (
     "%(asctime)s.%(msecs)03d "  # timestamp with milliseconds
     "[%(levelname)-5s] "  # level, padded

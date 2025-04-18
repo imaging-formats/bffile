@@ -3,7 +3,7 @@
 from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__ = version("bffile")
+    __version__ = version("bioformats-bsd")
 except PackageNotFoundError:
     __version__ = "uninstalled"
 

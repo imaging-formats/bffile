@@ -1,4 +1,4 @@
-* bffile version:
+* bioformats version:
 * Python version:
 * Operating System:
 

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bioformats_bsd"]
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+
+# https://peps.python.org/pep-0621/
+[project]
+name = "bioformats-bsd"
+dynamic = ["version"]
+description = "Yet another Bio-Formats wrapper for python (BSD by default)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "BSD-3-Clause" }
+authors = [{ name = "Talley Lambert", email = "talley.lambert@gmail.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=2.0.2",
+    "ome-types>=0.6.1",
+    "scyjava>=1.10.2",
+    "dask[array]>=2024.8.0",
+    "resource-backed-dask-array>=0.1.0",
+]
+
+[project.urls]
+homepage = "https://github.com/tlambert03/bioformats"
+repository = "https://github.com/tlambert03/bioformats"
