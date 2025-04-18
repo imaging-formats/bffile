@@ -13,7 +13,10 @@ from scyjava import jimport
 from typing_extensions import Self
 
 from . import _utils
-from ._java_stuff import hide_memoization_warning, pixtype2dtype, redirect_java_logging
+from ._java_stuff import (
+    pixtype2dtype,
+    start_jvm,
+)
 
 if TYPE_CHECKING:
     from resource_backed_dask_array import ResourceBackedDaskArray
@@ -82,7 +85,7 @@ class BioFile:
         dask_tiles: bool = False,
         tile_size: tuple[int, int] | None = None,
     ):
-        redirect_java_logging()
+        start_jvm()
         ImageReader = jimport("loci.formats.ImageReader")
 
         self._path = str(Path(path).expanduser().absolute())
@@ -95,7 +98,6 @@ class BioFile:
         # memoize to save time on later re-openings of the same file.
         if memoize > 0:
             Memoizer = jimport("loci.formats.Memoizer")
-            hide_memoization_warning()
             if BIOFORMATS_MEMO_DIR is not None:
                 self._r = Memoizer(self._r, memoize, BIOFORMATS_MEMO_DIR)
             else:

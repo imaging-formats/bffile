@@ -3,14 +3,18 @@ from __future__ import annotations
 import logging
 import os
 import warnings
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from functools import cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+import jgo
 import jpype
 import numpy as np
 import scyjava
 import scyjava.config
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 MAVEN_COORDINATE = "ome:formats-gpl:RELEASE"
 
@@ -55,17 +59,9 @@ handler.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
 if not any(isinstance(h, logging.StreamHandler) for h in LOGGER.handlers):
     LOGGER.addHandler(handler)
 
-_LOGGING_REDIRECTED = False
-
 
 def redirect_java_logging(logger: logging.Logger | None = None) -> None:
     """Redirect Java logging to Python logger."""
-    global _LOGGING_REDIRECTED
-    if _LOGGING_REDIRECTED:
-        return
-
-    scyjava.start_jvm()  # won't start if already running
-
     _logger = logger or LOGGER
 
     class PyAppender:
@@ -76,6 +72,9 @@ def redirect_java_logging(logger: logging.Logger | None = None) -> None:
             # dispatch to Python logger
             getattr(logger, level.lower(), _logger.info)(msg)
 
+        def getName(self) -> str:
+            return "PyAppender"
+
     # Create a proxy for the Appender interface
     proxy = jpype.JProxy("ch.qos.logback.core.Appender", inst=PyAppender())
 
@@ -85,13 +84,11 @@ def redirect_java_logging(logger: logging.Logger | None = None) -> None:
 
     # remove the console appender
     for appender in root.iteratorForAppenders():
-        if appender.getName() == "console":
+        if appender.getName() in ("console", "PyAppender"):
             root.detachAppender(appender)
-            break
 
     # add the Python appender
     root.addAppender(proxy)
-    _LOGGING_REDIRECTED = True
 
 
 def pixtype2dtype(pixeltype: int, little_endian: bool) -> np.dtype:
@@ -123,3 +120,39 @@ def hide_memoization_warning() -> None:
 
         System = jpype.JPackage("java").lang.System
         System.err.close()
+
+
+maven_url = "tgz+https://dlcdn.apache.org/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.tar.gz"
+maven_sha512 = "a555254d6b53d267965a3404ecb14e53c3827c09c3b94b5678835887ab404556bfaf78dcfe03ba76fa2508649dca8531c74bca4d5846513522404d48e8c4ac8b"
+
+
+@contextmanager
+def path_prepended(path: Path | str) -> None:
+    """
+    Context manager to temporarily prepend the given path to PATH.
+    """
+    save_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = os.pathsep.join([str(path), save_path])
+    try:
+        yield
+    finally:
+        os.environ["PATH"] = save_path
+
+
+@cache
+def start_jvm() -> None:
+    """Start the JVM if not already running."""
+    try:
+        scyjava.start_jvm()  # won't repeat if already running
+    except jgo.jgo.ExecutableNotFound as e:
+        executable = e.args[0].split(" ")[0]
+        if executable == "mvn":
+            import cjdk
+
+            maven_dir = cjdk.cache_package("Maven", maven_url, sha512=maven_sha512)
+            if mvn := next(maven_dir.rglob("apache-maven-*/**/mvn"), None):
+                with path_prepended(mvn.parent):
+                    scyjava.start_jvm()
+
+    # redirect_java_logging()
+    # hide_memoization_warning()
