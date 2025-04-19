@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from xml.etree import ElementTree as ET
 
 import numpy as np
-import numpy.typing as npt
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -67,7 +66,7 @@ class DimensionNames:
 
 def get_coords_from_ome(
     ome: OME, scene_index: int
-) -> Mapping[str, list[Any] | npt.ArrayLike | Any]:
+) -> Mapping[str, list[Any] | np.ndarray | Any]:
     """
     Process the OME metadata to retrieve the coordinate planes.
 

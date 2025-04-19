@@ -12,6 +12,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  pyright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run pyright --verbose
+
   test:
     name: Test ${{ matrix.os }} py${{ matrix.python-version }} java${{ matrix.java-version }}
     runs-on: ${{ matrix.os }}
