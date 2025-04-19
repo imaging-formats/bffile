@@ -11,7 +11,6 @@ from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
-import jgo
 import jpype
 import numpy as np
 import scyjava

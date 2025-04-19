@@ -7,11 +7,10 @@ import sys
 import tempfile
 from io import BytesIO
 from pathlib import Path
-import jpype
-
 from typing import TYPE_CHECKING
 from zipfile import ZipFile
 
+import jpype
 import pytest
 import requests
 import scyjava

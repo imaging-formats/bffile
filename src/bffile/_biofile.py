@@ -13,10 +13,7 @@ from scyjava import jimport
 from typing_extensions import Self
 
 from . import _utils
-from ._java_stuff import (
-    pixtype2dtype,
-    start_jvm,
-)
+from ._java_stuff import pixtype2dtype, start_jvm
 
 if TYPE_CHECKING:
     from resource_backed_dask_array import ResourceBackedDaskArray
