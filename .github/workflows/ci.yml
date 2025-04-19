@@ -20,7 +20,7 @@ jobs:
       - run: uv run pyright --verbose
 
   test:
-    name: Test ${{ matrix.os }} py${{ matrix.python-version }} j${{ matrix.java-version }}
+    name: Test ${{ matrix.os }} py${{ matrix.python-version }} j${{ matrix.java-version }} bf${{ matrix.bioformats-version }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
