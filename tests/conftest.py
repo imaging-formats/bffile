@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import os
 import shutil
 import sys
@@ -103,21 +104,23 @@ def cache_dirs(request: pytest.FixtureRequest) -> Iterator[Path | None]:
         yield None
         return
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = Path(tmpdir)
-        os.environ["CJDK_CACHE_DIR"] = str(tmp_path / "cjdk")
+    tmp_path = Path(tempfile.mkdtemp())
+    os.environ["CJDK_CACHE_DIR"] = str(tmp_path / "cjdk")
 
-        os.environ["JGO_CACHE_DIR"] = jgo = str(tmp_path / "jgo")
-        scyjava.config.set_cache_dir(jgo)
+    os.environ["JGO_CACHE_DIR"] = jgo = str(tmp_path / "jgo")
+    scyjava.config.set_cache_dir(jgo)
 
-        m2_repo = tmp_path / "m2" / "repository"
-        m2_repo.mkdir(parents=True, exist_ok=True)
-        os.environ["M2_REPO"] = _m2_repo = str(m2_repo)
-        os.environ["MAVEN_OPTS"] = f"-Dmaven.repo.local={_m2_repo}"
-        scyjava.config.set_m2_repo(_m2_repo)
+    m2_repo = tmp_path / "m2" / "repository"
+    m2_repo.mkdir(parents=True, exist_ok=True)
+    os.environ["M2_REPO"] = _m2_repo = str(m2_repo)
+    os.environ["MAVEN_OPTS"] = f"-Dmaven.repo.local={_m2_repo}"
+    scyjava.config.set_m2_repo(_m2_repo)
 
-        yield tmp_path
+    yield tmp_path
 
-        # TEARDOWN: shut down JVM to close all JAR handles
+    # doing manual cleanup here to avoid windows file locks on jars during teardown
+    @atexit.register
+    def _cleanup() -> None:
         if jpype.isJVMStarted():
             jpype.shutdownJVM()
+        shutil.rmtree(tmp_path, ignore_errors=True)
