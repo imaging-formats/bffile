@@ -189,7 +189,9 @@ def _setup_java() -> Iterator[str]:
             ) from None
 
         LOGGER.info("No JVM found, installing Zulu JRE 11 via cjdk...")
-        java_ctx = cjdk.java_env(vendor="zulu-jre", version="11")
+        vendor = os.getenv("JAVA_VENDOR", "zulu-jre")
+        version = os.getenv("JAVA_VERSION", "11")
+        java_ctx = cjdk.java_env(vendor=vendor, version=version)
 
     with java_ctx:
         if not shutil.which("mvn"):
