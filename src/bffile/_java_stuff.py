@@ -26,7 +26,7 @@ MAVEN_COORDINATE = "ome:formats-gpl:RELEASE"
 
 # Check if the BIOFORMATS_VERSION environment variable is set
 # and if so, use it as the Maven coordinate
-if (coord := os.getenv("BIOFORMATS_VERSION", None)) is not None:
+if coord := os.getenv("BIOFORMATS_VERSION", ""):
     # allow a single version number to be passed
     if ":" not in coord and all(x.isdigit() for x in coord.split(".")):
         # if the coordinate is just a version number, use the default group and artifact
@@ -89,12 +89,13 @@ def redirect_java_logging(logger: logging.Logger | None = None) -> None:
     root = Slf4jFactory.getILoggerFactory().getLogger("ROOT")
 
     # remove the console appender
-    for appender in root.iteratorForAppenders():
-        if appender.getName() in ("console", "PyAppender"):
-            root.detachAppender(appender)
+    with contextlib.suppress(AttributeError):
+        for appender in root.iteratorForAppenders():
+            if appender.getName() in ("console", "PyAppender"):
+                root.detachAppender(appender)
 
-    # add the Python appender
-    root.addAppender(proxy)
+        # add the Python appender
+        root.addAppender(proxy)
 
 
 def pixtype2dtype(pixeltype: int, little_endian: bool) -> np.dtype:
@@ -144,16 +145,10 @@ def path_prepended(path: Path | str) -> Iterator[None]:
 @cache
 def start_jvm() -> None:
     """Start the JVM if not already running."""
-    with _setup_java() as jvm_path:
-        print(f"JVM path: {jvm_path}")
-        try:
-            print("Starting JVM...", scyjava.config.endpoints)
-            scyjava.start_jvm()  # won't repeat if already running
-        except jgo.jgo.ExecutableNotFound:
-            breakpoint()
-
-    # redirect_java_logging()
-    # hide_memoization_warning()
+    with _setup_java():
+        scyjava.start_jvm()  # won't repeat if already running
+        redirect_java_logging()
+        hide_memoization_warning()
 
 
 subprocess_check_output = subprocess.check_output
