@@ -6,6 +6,8 @@ import sys
 import tempfile
 from io import BytesIO
 from pathlib import Path
+import jpype
+
 from typing import TYPE_CHECKING
 from zipfile import ZipFile
 
@@ -115,3 +117,7 @@ def cache_dirs(request: pytest.FixtureRequest) -> Iterator[Path | None]:
         scyjava.config.set_m2_repo(_m2_repo)
 
         yield tmp_path
+
+        # TEARDOWN: shut down JVM to close all JAR handles
+        if jpype.isJVMStarted():
+            jpype.shutdownJVM()
