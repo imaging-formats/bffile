@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any
 
 
 @dataclass
@@ -25,6 +25,6 @@ class CoreMetadata:
     indexed: bool = False
     false_color: bool = True
     metadata_complete: bool = False
-    series_metadata: Dict[str, Any] = field(default_factory=dict)
+    series_metadata: dict[str, Any] = field(default_factory=dict)
     thumbnail: bool = False
     resolution_count: int = 1

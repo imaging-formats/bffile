@@ -1,66 +1,54 @@
-#!/usr/bin/env python3
-from __future__ import annotations
 import os
-import glob
+import shutil
 import subprocess
-import jpype
+from importlib import import_module
+
+import cjdk
+import jgo
 import jpype.imports
-import stubgenj
-from typing import List
+import scyjava
+import scyjava.config
+from stubgenj import generateJavaStubs
 
+with cjdk.java_env(vendor="temurin", version="11"):
+    maven_url = "tgz+https://dlcdn.apache.org/maven/maven-3/3.9.6/binaries/apache-maven-3.9.6-bin.tar.gz"
+    maven_dir = cjdk.cache_package("Maven", maven_url)
+    maven_bin = next(maven_dir.rglob("mvn"))
+    os.environ["PATH"] = os.pathsep.join([str(maven_bin.parent), os.environ["PATH"]])
 
-def build_classpath(api_dir: str) -> List[str]:
-    """
-    Returns a list of all the JARs we need on the classpath:
-      - the main formats-api JAR
-      - all the copied-dependencies
-    """
-    target = os.path.join(api_dir, "target")
-    # main JAR
-    jars = glob.glob(os.path.join(target, "formats-api-*.jar"))
-    # dependencies
-    jars += glob.glob(os.path.join(target, "dependency", "*.jar"))
-    return jars
+    # doing this instead of scyjava.start_jvm because of
+    # https://github.com/scijava/scyjava/issues/79
+    endpoints = ["ome:formats-gpl", "ch.qos.logback:logback-classic:1.3.15"]
+    _, workspace = jgo.resolve_dependencies(
+        "+".join(endpoints),
+        m2_repo=scyjava.config.get_m2_repo(),
+        cache_dir=scyjava.config.get_cache_dir(),
+        manage_dependencies=scyjava.config.get_manage_deps(),
+        repositories=scyjava.config.get_repositories(),
+    )
+    jpype.addClassPath(os.path.join(workspace, "*"))
+    jpype.startJVM(convertStrings=True)
 
-
-def main() -> None:
-    repo_root = os.path.abspath("bioformats/components/formats-api")
-    if not os.path.isdir(repo_root):
-        raise RuntimeError(
-            "Please run this script from the project root, after cloning."
-        )
-
-    cp = build_classpath(repo_root)
-    # start the JVM with our classpath and string conversion enabled
-    jpype.startJVM(classpath=cp, convertStrings=True)
-    jpype.imports.registerDomain("loci.formats")  # optional, for nicer imports
-
-    # now import the classes you care about
-    from loci.formats import ImageReader
-    from loci.formats import (
-        IFormatReader,
-        IFormatHandler,
-        IPyramidHandler,
-        ICompressedTileReader,
+    prefixes = ["loci.formats", "loci.common", "java", "ome.units", "ome.xml"]
+    output = "stubs"
+    generateJavaStubs(
+        [import_module(prefix) for prefix in prefixes],  # type: ignore
+        useStubsSuffix=True,
+        outputDir=output,
+        jpypeJPackageStubs=False,
+        includeJavadoc=True,
     )
 
-    # generate stubs for all of them (stubgenj also pulls in supertypes/interfaces)
-    stubgenj.generateJavaStubs(
+if shutil.which("ruff"):
+    subprocess.run(
         [
-            ImageReader,
-            IFormatReader,
-            IFormatHandler,
-            IPyramidHandler,
-            ICompressedTileReader,
-        ],
-        useStubsSuffix=True,  # makes top‑level folder look like “loci.formats-stubs/…”
-        convertStrings=True,  # map java.lang.String → Python str
-        outputDir="stubs",  # writes “stubs/loci/formats/…/*.pyi”
+            "ruff",
+            "check",
+            output,
+            "--fix",
+            "--unsafe-fixes",
+            "--select=E,W,F,I,UP,C4,B,A001,RUF,TC,TID",
+            "--ignore=E501,A001",
+        ]
     )
-
-    jpype.shutdownJVM()
-    print("Done!  Stubs are in ./stubs/loci/formats/")
-
-
-if __name__ == "__main__":
-    main()
+    subprocess.run(["ruff", "format", "--target-version", "py39", output])

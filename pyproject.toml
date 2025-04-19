@@ -33,6 +33,7 @@ dependencies = [
     "scyjava>=1.10.2",
     "dask[array]>=2024.8.0",
     "resource-backed-dask-array>=0.1.0",
+    "cjdk>=0.4.0",
 ]
 
 [project.urls]
@@ -92,6 +93,7 @@ skip-magic-trailing-comma = false # default is false
 
 # https://mypy.readthedocs.io/en/stable/config_file.html
 [tool.mypy]
+mypy_path = "$MYPY_CONFIG_FILE_DIR/stubs"
 files = "src/**/"
 strict = true
 disallow_any_generics = false
@@ -99,11 +101,23 @@ disallow_subclassing_any = false
 show_error_codes = true
 pretty = true
 
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.9"
+enableExperimentalFeatures = true
+verboseOutput = true
+venv = ".venv"
+stubPath = "./stubs"
+reportMissingModuleSource = "none"
+
 # https://docs.pytest.org/
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    "ignore:Failing to pass a value to the 'type_params' parameter"
+]
 
 # https://coverage.readthedocs.io/
 [tool.coverage.report]

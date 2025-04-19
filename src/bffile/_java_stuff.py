@@ -5,7 +5,7 @@ import os
 import warnings
 from contextlib import suppress
 from functools import cache
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 import jpype
 import numpy as np
@@ -123,3 +123,41 @@ def hide_memoization_warning() -> None:
 
         System = jpype.JPackage("java").lang.System
         System.err.close()
+
+
+if TYPE_CHECKING:
+    from loci.common.services import ServiceFactory
+    from loci.formats import FormatTools, ImageReader, Memoizer
+    from loci.formats.in_ import DynamicMetadataOptions
+    from loci.formats.services import OMEXMLService
+    from loci.formats.ome import OMEPyramidStore
+
+
+@overload
+def jimport(
+    classname: Literal["loci.formats.ome.OMEPyramidStore"],
+) -> type[OMEPyramidStore]: ...
+@overload
+def jimport(
+    classname: Literal["loci.formats.in_.DynamicMetadataOptions"],
+) -> type[DynamicMetadataOptions]: ...
+@overload
+def jimport(
+    classname: Literal["loci.formats.FormatTools"],
+) -> type[FormatTools]: ...
+@overload
+def jimport(
+    classname: Literal["loci.formats.services.OMEXMLService"],
+) -> type[OMEXMLService]: ...
+@overload
+def jimport(
+    classname: Literal["loci.common.services.ServiceFactory"],
+) -> type[ServiceFactory]: ...
+@overload
+def jimport(classname: Literal["loci.formats.ImageReader"]) -> type[ImageReader]: ...
+@overload
+def jimport(classname: Literal["loci.formats.Memoizer"]) -> type[Memoizer]: ...
+@overload
+def jimport(classname: str) -> Any: ...
+def jimport(classname: str) -> Any:
+    return scyjava.jimport(classname)

@@ -9,11 +9,15 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import dask.array as da
 import numpy as np
 from ome_types import OME
-from scyjava import jimport
 from typing_extensions import Self
 
 from . import _utils
-from ._java_stuff import hide_memoization_warning, pixtype2dtype, redirect_java_logging
+from ._java_stuff import (
+    hide_memoization_warning,
+    jimport,
+    pixtype2dtype,
+    redirect_java_logging,
+)
 
 if TYPE_CHECKING:
     from resource_backed_dask_array import ResourceBackedDaskArray
@@ -229,7 +233,9 @@ class BioFile:
     def ome_xml(self) -> str:
         """Return OME XML string."""
         if store := self._r.getMetadataStore():
-            return str(store.dumpXML())
+            OMEPyramidStore = jimport("loci.formats.ome.OMEPyramidStore")
+            if isinstance(store, OMEPyramidStore):
+                return str(store.dumpXML())
         return ""
 
     @property
@@ -349,4 +355,4 @@ class BioFile:
     def bioformats_version() -> str:
         """Get the version of Bio-Formats."""
         Version = jimport("loci.formats.FormatTools")
-        return getattr(Version, "VERSION", "unknown")
+        return str(getattr(Version, "VERSION", "unknown"))

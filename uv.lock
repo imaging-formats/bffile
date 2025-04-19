@@ -29,6 +29,7 @@ wheels = [
 name = "bffile"
 source = { editable = "." }
 dependencies = [
+    { name = "cjdk" },
     { name = "dask", version = "2024.8.0", source = { registry = "https://pypi.org/simple" }, extra = ["array"], marker = "python_full_version < '3.10'" },
     { name = "dask", version = "2025.3.0", source = { registry = "https://pypi.org/simple" }, extra = ["array"], marker = "python_full_version >= '3.10'" },
     { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -62,6 +63,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cjdk", specifier = ">=0.4.0" },
     { name = "dask", extras = ["array"], specifier = ">=2024.8.0" },
     { name = "numpy", specifier = ">=2.0.2" },
     { name = "ome-types", specifier = ">=0.6.1" },
@@ -179,6 +181,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/5a/0b59704c38470df6768aa154cc87b1ac7c9bb687990a1559dc8765e8627e/charset_normalizer-3.4.1-cp39-cp39-win32.whl", hash = "sha256:3bed14e9c89dcb10e8f3a29f9ccac4955aebe93c71ae803af79265c9ca5644c5", size = 95453 },
     { url = "https://files.pythonhosted.org/packages/85/2d/a9790237cb4d01a6d57afadc8573c8b73c609ade20b80f4cda30802009ee/charset_normalizer-3.4.1-cp39-cp39-win_amd64.whl", hash = "sha256:49402233c892a461407c512a19435d1ce275543138294f7ef013f0b63d5d3765", size = 102811 },
     { url = "https://files.pythonhosted.org/packages/0e/f6/65ecc6878a89bb1c23a086ea335ad4bf21a588990c3f535a227b9eea9108/charset_normalizer-3.4.1-py3-none-any.whl", hash = "sha256:d98b1668f06378c6dbefec3b92299716b931cd4e6061f3c875a71ced1780ab85", size = 49767 },
+]
+
+[[package]]
+name = "cjdk"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "click" },
+    { name = "progressbar2" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/2e/31d15a9749873565f8b2c3c86347b6e9996072b763f2566143df7e7d85a2/cjdk-0.4.0.tar.gz", hash = "sha256:6c5c9d6df20c2d6f8dee547012b6daeee993e392e44c439cad2850114fcff778", size = 38709 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a4/37/47ee260be50b2be0d1890193e1401848e18dcbb8fda9d991f0684ed1617b/cjdk-0.4.0-py3-none-any.whl", hash = "sha256:5f3c25d408eebb096c04bf96cd263a3b3e12928cbd6a02068fd84ed1ea0929d5", size = 22377 },
 ]
 
 [[package]]
@@ -926,6 +942,18 @@ wheels = [
 ]
 
 [[package]]
+name = "progressbar2"
+version = "4.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-utils" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/19/24/3587e795fc590611434e4bcb9fbe0c3dddb5754ce1a20edfd86c587c0004/progressbar2-4.5.0.tar.gz", hash = "sha256:6662cb624886ed31eb94daf61e27583b5144ebc7383a17bae076f8f4f59088fb", size = 101449 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ee/94/448f037fb0ffd0e8a63b625cf9f5b13494b88d15573a987be8aaa735579d/progressbar2-4.5.0-py3-none-any.whl", hash = "sha256:625c94a54e63915b3959355e6d4aacd63a00219e5f3e2b12181b76867bf6f628", size = 57132 },
+]
+
+[[package]]
 name = "prompt-toolkit"
 version = "3.0.51"
 source = { registry = "https://pypi.org/simple" }
@@ -1166,6 +1194,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/25/69/5f1e57f6c5a39f81411b550027bf72842c4567ff5fd572bed1edc9e4b5d9/pytest_cov-6.1.1.tar.gz", hash = "sha256:46935f7aaefba760e716c2ebfbe1c216240b9592966e7da99ea8292d4d3e2a0a", size = 66857 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/28/d0/def53b4a790cfb21483016430ed828f64830dd981ebe1089971cd10cab25/pytest_cov-6.1.1-py3-none-any.whl", hash = "sha256:bddf29ed2d0ab6f4df17b4c55b0a657287db8684af9c42ea546b21b1041b3dde", size = 23841 },
+]
+
+[[package]]
+name = "python-utils"
+version = "3.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/13/4c/ef8b7b1046d65c1f18ca31e5235c7d6627ca2b3f389ab1d44a74d22f5cc9/python_utils-3.9.1.tar.gz", hash = "sha256:eb574b4292415eb230f094cbf50ab5ef36e3579b8f09e9f2ba74af70891449a0", size = 35403 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d4/69/31c82567719b34d8f6b41077732589104883771d182a9f4ff3e71430999a/python_utils-3.9.1-py2.py3-none-any.whl", hash = "sha256:0273d7363c7ad4b70999b2791d5ba6b55333d6f7a4e4c8b6b39fb82b5fab4613", size = 32078 },
 ]
 
 [[package]]

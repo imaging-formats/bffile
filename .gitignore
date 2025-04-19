@@ -111,3 +111,4 @@ ENV/
 .idea/
 tests/data/
 bioformats/
+stubs/
