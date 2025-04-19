@@ -20,7 +20,7 @@ jobs:
       - run: uv run pyright --verbose
 
   test:
-    name: Test ${{ matrix.os }} py${{ matrix.python-version }} java${{ matrix.java-version }}
+    name: Test ${{ matrix.os }} py${{ matrix.python-version }} j${{ matrix.java-version }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -43,12 +43,23 @@ jobs:
           - os: windows-latest
             python-version: "3.10"
             java-version: "8"
+          # no java at all!
+          - os: windows-latest
+            python-version: "3.13"
+            java-version: ""
+          - os: macos-latest
+            python-version: "3.12"
+            java-version: ""
+          - os: ubuntu-latest
+            python-version: "3.11"
+            java-version: ""
 
     env:
       UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
+        if: matrix.java-version != ''
         with:
           distribution: temurin
           java-version: ${{ matrix.java-version }}
