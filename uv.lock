@@ -54,7 +54,7 @@ dev = [
     { name = "requests" },
     { name = "rich" },
     { name = "ruff" },
-    { name = "stubgenj" },
+    { name = "types-requests" },
 ]
 test = [
     { name = "pytest" },
@@ -64,7 +64,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cjdk", specifier = ">=0.4.0" },
+    { name = "cjdk", specifier = ">=0.3.0" },
     { name = "dask", extras = ["array"], specifier = ">=2024.8.0" },
     { name = "numpy", specifier = ">=2.0.2" },
     { name = "ome-types", specifier = ">=0.6.1" },
@@ -85,7 +85,7 @@ dev = [
     { name = "requests", specifier = ">=2.32.3" },
     { name = "rich", specifier = ">=14.0.0" },
     { name = "ruff", specifier = ">=0.11.6" },
-    { name = "stubgenj", specifier = ">=0.2.12" },
+    { name = "types-requests", specifier = ">=2.32.0.20250328" },
 ]
 test = [
     { name = "pytest", specifier = ">=8.3.5" },
@@ -842,7 +842,7 @@ wheels = [
 [[package]]
 name = "ome-formats-gpl-stubs"
 version = "8.1.0"
-source = { git = "https://github.com/tlambert03/scyjava-stubs?subdirectory=packages%2Fome-formats-gpl-stubs#407f970033296c2e76858013bf6a366914413b5f" }
+source = { git = "https://github.com/tlambert03/scyjava-stubs?subdirectory=packages%2Fome-formats-gpl-stubs#43fdc0034f244c60ccd857c546c12c3447e5faed" }
 
 [[package]]
 name = "ome-types"
@@ -1361,18 +1361,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/28/e3/55dcc2cfbc3ca9c29519eb6884dd1415ecb53b0e934862d3559ddcb7e20b/stack_data-0.6.3.tar.gz", hash = "sha256:836a778de4fec4dcd1dcd89ed8abff8a221f58308462e1c4aa2a3cf30148f0b9", size = 44707 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/7b/ce1eafaf1a76852e2ec9b22edecf1daa58175c090266e9f6c64afcd81d91/stack_data-0.6.3-py3-none-any.whl", hash = "sha256:d5558e0c25a4cb0853cddad3d77da9891a08cb85dd9f9f91b9f8cd66e511e695", size = 24521 },
-]
-
-[[package]]
-name = "stubgenj"
-version = "0.2.12"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "jpype1" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3e/fb/a437e750af248b89d871ef011d56d00fd4d3cf6539d74b5f6d4e4d4b7c4b/stubgenj-0.2.12.tar.gz", hash = "sha256:b49240edbbb1c89f449b7cb547b0dac8fde531366641dad07b0a83e634c91f1f", size = 23705 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/ba/408d9c326f8f6a7dcb6ca181f97b256f32cd64289b4c59ff224964be5f8a/stubgenj-0.2.12-py3-none-any.whl", hash = "sha256:bf7cc475536e92e5958c8e2dcbb5c1d7cfbb3753b17f4df2ac86e0b385ee6683", size = 22067 },
 ]
 
 [[package]]
