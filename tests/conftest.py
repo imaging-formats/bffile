@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import atexit
-from contextlib import suppress
 import os
 import shutil
 import sys
@@ -10,13 +9,14 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING
 from zipfile import ZipFile
-from bffile import _biofile
 
 import jpype
 import pytest
 import requests
 import scyjava
 import scyjava.config
+
+from bffile import _biofile
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -64,7 +64,7 @@ DATA_FILES = sorted(
     [
         x
         for x in TEST_DATA.iterdir()
-        if x != URL_TXT and not x.suffix in IGNORE_EXTENSIONS
+        if x != URL_TXT and x.suffix not in IGNORE_EXTENSIONS
     ]
 )
 

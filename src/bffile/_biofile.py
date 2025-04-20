@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import os
+import warnings
 from contextlib import suppress
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar, cast
-import warnings
 
 import dask.array as da
 import numpy as np
@@ -231,15 +231,19 @@ class BioFile:
         """Return OME XML string."""
         if store := self._java_reader.getMetadataStore():
             try:
-                return str(store.dumpXML())
+                return str(store.dumpXML())  # pyright: ignore
             except Exception as e:
-                warnings.warn(f"Failed to retrieve OME XML: {e}", RuntimeWarning)
+                warnings.warn(
+                    f"Failed to retrieve OME XML: {e}", RuntimeWarning, stacklevel=2
+                )
         return ""
 
     @property
     def ome_metadata(self) -> OME:
         """Return OME object parsed by ome_types."""
-        xml = _utils.clean_ome_xml_for_known_issues(self.ome_xml)
+        if not (omx_xml := self.ome_xml):
+            return OME()
+        xml = _utils.clean_ome_xml_for_known_issues(omx_xml)
         return OME.from_xml(xml)
 
     def __enter__(self) -> Self:
