@@ -5,6 +5,7 @@ from contextlib import suppress
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar, cast
+import warnings
 
 import dask.array as da
 import numpy as np
@@ -229,9 +230,10 @@ class BioFile:
     def ome_xml(self) -> str:
         """Return OME XML string."""
         if store := self._java_reader.getMetadataStore():
-            OMEPyramidStore = jimport("loci.formats.ome.OMEPyramidStore")
-            if isinstance(store, OMEPyramidStore):
+            try:
                 return str(store.dumpXML())
+            except Exception as e:
+                warnings.warn(f"Failed to retrieve OME XML: {e}", RuntimeWarning)
         return ""
 
     @property

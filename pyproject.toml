@@ -117,6 +117,7 @@ testpaths = ["tests"]
 filterwarnings = [
     "error",
     "ignore:Failing to pass a value to the 'type_params' parameter",
+    "ignore:Failed to retrieve OME XML:RuntimeWarning",
 ]
 
 # https://coverage.readthedocs.io/
