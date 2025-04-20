@@ -29,7 +29,7 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=2.0.2",
-    "ome-types>=0.6.1",
+    "ome-types[pint,lxml]>=0.6.1",
     "scyjava>=1.10.2",
     "dask[array]>=2024.8.0",
     "resource-backed-dask-array>=0.1.0",

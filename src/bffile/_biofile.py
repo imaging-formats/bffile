@@ -4,7 +4,7 @@ import os
 from contextlib import suppress
 from pathlib import Path
 from threading import Lock
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import dask.array as da
 import numpy as np
@@ -17,6 +17,7 @@ from . import _utils
 from ._jimports import jimport
 
 if TYPE_CHECKING:
+    from loci.formats import ImageReader
     from resource_backed_dask_array import ResourceBackedDaskArray
 
 
@@ -83,95 +84,82 @@ class BioFile:
         dask_tiles: bool = False,
         tile_size: tuple[int, int] | None = None,
     ):
-        ImageReader = jimport("loci.formats.ImageReader")
-
         self._path = str(Path(path).expanduser().absolute())
-        self._r = ImageReader()
+        self._current_scene_index = series
+        self._lock = Lock()
+        self.dask_tiles = dask_tiles
+
+        self._java_reader = jimport("loci.formats.ImageReader")()
         if meta:
-            self._r.setMetadataStore(self._create_ome_meta())
+            self._java_reader.setMetadataStore(self._create_ome_meta())
         if original_meta:
-            self._r.setOriginalMetadataPopulated(True)
+            self._java_reader.setOriginalMetadataPopulated(True)
 
         # memoize to save time on later re-openings of the same file.
         if memoize > 0:
             Memoizer = jimport("loci.formats.Memoizer")
             if BIOFORMATS_MEMO_DIR is not None:
-                self._r = Memoizer(self._r, memoize, BIOFORMATS_MEMO_DIR)
+                self._java_reader = Memoizer(
+                    self._java_reader, memoize, BIOFORMATS_MEMO_DIR
+                )
             else:
-                self._r = Memoizer(self._r, memoize)
+                self._java_reader = Memoizer(self._java_reader, memoize)
 
         if options:
             DynamicMetadataOptions = jimport("loci.formats.in_.DynamicMetadataOptions")
             mo = DynamicMetadataOptions()
             for name, value in options.items():
                 mo.set(name, str(value))
-            self._r.setMetadataOptions(mo)
+            self._java_reader.setMetadataOptions(mo)
 
-        self._current_scene_index = series
         self.open()
-        self._lock = Lock()
         self.set_series(series)
 
-        self.dask_tiles = dask_tiles
         if self.dask_tiles:
             if tile_size is None:
                 self.tile_size = (
-                    self._r.getOptimalTileHeight(),
-                    self._r.getOptimalTileWidth(),
+                    self._java_reader.getOptimalTileHeight(),
+                    self._java_reader.getOptimalTileWidth(),
                 )
             else:
-                self.tile_size = tile_size
+                if len(tiles := tuple(tile_size)) != 2:
+                    raise ValueError(f"tile_size must be length 2, got {len(tiles)}")
+                if not all(isinstance(x, int) for x in tiles):
+                    raise ValueError(f"tile_size must be integers, got {tiles}")
+                self.tile_size = cast("tuple[int, int]", tiles)
 
     def set_series(self, series: int = 0) -> None:
-        self._r.setSeries(series)
-
-        self._core_meta = CoreMetadata(
-            dtype=self._r.dtype(),
-            size_x=self._r.getSizeX(),
-            size_y=self._r.getSizeY(),
-            size_z=self._r.getSizeZ(),
-            size_c=self._r.getEffectiveSizeC(),
-            size_t=self._r.getSizeT(),
-            rgb_count=self._r.getRGBChannelCount(),
-            series_count=self._r.getSeriesCount(),
-            thumb_size_x=self._r.getThumbSizeX(),
-            thumb_size_y=self._r.getThumbSizeY(),
-            bits_per_pixel=self._r.getBitsPerPixel(),
-            image_count=self._r.getImageCount(),
-            modulo_z=self._r.getModuloZ(),
-            modulo_c=self._r.getModuloC(),
-            modulo_t=self._r.getModuloT(),
-            dimension_order=self._r.getDimensionOrder(),
-            is_order_certain=self._r.isOrderCertain(),
-            is_rgb=self._r.isRGB(),
-            is_little_endian=self._r.isLittleEndian(),
-            is_interleaved=self._r.isInterleaved(),
-            is_indexed=self._r.isIndexed(),
-            is_false_color=self._r.isFalseColor(),
-            is_metadata_complete=self._r.isMetadataComplete(),
-            is_thumbnail_series=self._r.isThumbnailSeries(),
-            series_metadata=self._r.getSeriesMetadata(),
-            resolution_count=self._r.getResolutionCount(),
-        )
+        self._java_reader.setSeries(series)
         self._current_scene_index = series
+
+    def java_reader(self) -> ImageReader:
+        """Return the native reader object."""
+        return self._java_reader
 
     @property
     def core_meta(self) -> CoreMetadata:
-        return self._core_meta
+        return self._core_meta_list[self._current_scene_index]
 
     @property
     def shape(self) -> OMEShape:
-        return self._core_meta.shape
+        return self.core_meta.shape
+
+    @property
+    def dtype(self) -> np.dtype:
+        return self.core_meta.dtype
 
     def open(self) -> None:
         """Open file."""
-        self._r.setId(self._path)
-        self._r.setSeries(self._current_scene_index)
+        self._java_reader.setId(self._path)
+        self._java_reader.setSeries(self._current_scene_index)
+        self._core_meta_list = [
+            CoreMetadata.from_java(x) for x in self._java_reader.getCoreMetadataList()
+        ]
 
     def close(self) -> None:
         """Close file."""
         with suppress(Exception):
-            self._r.close()
+            self._java_reader.close()
 
     def to_numpy(self, series: int | None = None) -> np.ndarray:
         """Create numpy array for the specified or current series.
@@ -207,7 +195,7 @@ class BioFile:
         from resource_backed_dask_array import resource_backed_dask_array
 
         if series is not None:
-            self._r.setSeries(series)
+            self._java_reader.setSeries(series)
 
         nt, nc, nz, ny, nx, nrgb = self.core_meta.shape
 
@@ -229,7 +217,7 @@ class BioFile:
     @property
     def closed(self) -> bool:
         """Whether the underlying file is currently open."""
-        return not bool(self._r.getCurrentFile())
+        return not bool(self._java_reader.getCurrentFile())
 
     @property
     def filename(self) -> str:
@@ -240,7 +228,7 @@ class BioFile:
     @property
     def ome_xml(self) -> str:
         """Return OME XML string."""
-        if store := self._r.getMetadataStore():
+        if store := self._java_reader.getMetadataStore():
             OMEPyramidStore = jimport("loci.formats.ome.OMEPyramidStore")
             if isinstance(store, OMEPyramidStore):
                 return str(store.dumpXML())
@@ -295,26 +283,26 @@ class BioFile:
             if not was_open:
                 self.open()
 
-            *_, ny, nx, nrgb = self.core_meta.shape
+            shape = self.core_meta.shape
 
-            y = y if y is not None else slice(0, ny)
-            x = x if x is not None else slice(0, nx)
+            y = y if y is not None else slice(0, shape.y)
+            x = x if x is not None else slice(0, shape.x)
 
             # get bytes from bioformats
-            idx = self._r.getIndex(z, c, t)
-            ystart, ywidth = _utils.slice2width(y, ny)
-            xstart, xwidth = _utils.slice2width(x, nx)
+            idx = self._java_reader.getIndex(z, c, t)
+            ystart, ywidth = _utils.slice2width(y, shape.y)
+            xstart, xwidth = _utils.slice2width(x, shape.x)
             # read bytes using bioformats
-            buffer = self._r.openBytes(idx, xstart, ystart, xwidth, ywidth)
+            buffer = self._java_reader.openBytes(idx, xstart, ystart, xwidth, ywidth)
             # convert buffer to numpy array
             im = np.frombuffer(bytes(buffer), self.core_meta.dtype)
 
             # reshape
-            if nrgb > 1:
+            if shape.rgb > 1:
                 if self.core_meta.is_interleaved:
-                    im.shape = (ywidth, xwidth, nrgb)
+                    im.shape = (ywidth, xwidth, shape.rgb)
                 else:
-                    im.shape = (nrgb, ywidth, xwidth)
+                    im.shape = (shape.rgb, ywidth, xwidth)
                     im = np.transpose(im, (1, 2, 0))
             else:
                 im.shape = (ywidth, xwidth)
