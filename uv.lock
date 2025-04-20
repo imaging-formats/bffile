@@ -971,7 +971,7 @@ wheels = [
 [[package]]
 name = "ome-formats-gpl-stubs"
 version = "8.1.0"
-source = { git = "https://github.com/tlambert03/scyjava-stubs?subdirectory=packages%2Fome-formats-gpl-stubs#43fdc0034f244c60ccd857c546c12c3447e5faed" }
+source = { git = "https://github.com/tlambert03/scyjava-stubs?subdirectory=packages%2Fome-formats-gpl-stubs#46282e3f730e8c22b804af1c2ffa724654ef5ed7" }
 
 [[package]]
 name = "ome-types"
