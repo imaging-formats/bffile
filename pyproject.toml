@@ -108,7 +108,7 @@ pythonVersion = "3.9"
 enableExperimentalFeatures = true
 verboseOutput = true
 venv = ".venv"
-# reportMissingModuleSource = "none"
+reportMissingModuleSource = "none"
 
 # https://docs.pytest.org/
 [tool.pytest.ini_options]

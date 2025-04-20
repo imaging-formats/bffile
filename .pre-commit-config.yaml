@@ -30,3 +30,5 @@ repos:
         # you have to add the things you want to type check against here
         additional_dependencies:
           - numpy
+          - git+https://github.com/tlambert03/scyjava-stubs#subdirectory=packages/ome-formats-gpl-stubs
+          - ome-types

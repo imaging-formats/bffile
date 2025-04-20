@@ -14,7 +14,7 @@ from typing_extensions import Self
 from bffile._core_metadata import CoreMetadata, OMEShape
 
 from . import _utils
-from ._java_stuff import jimport, pixtype2dtype, start_jvm
+from ._jimports import jimport
 
 if TYPE_CHECKING:
     from resource_backed_dask_array import ResourceBackedDaskArray
@@ -83,7 +83,6 @@ class BioFile:
         dask_tiles: bool = False,
         tile_size: tuple[int, int] | None = None,
     ):
-        start_jvm()
         ImageReader = jimport("loci.formats.ImageReader")
 
         self._path = str(Path(path).expanduser().absolute())
@@ -127,7 +126,7 @@ class BioFile:
         self._r.setSeries(series)
 
         self._core_meta = CoreMetadata(
-            dtype=pixtype2dtype(self._r.getPixelType(), self._r.isLittleEndian()),
+            dtype=self._r.dtype(),
             size_x=self._r.getSizeX(),
             size_y=self._r.getSizeY(),
             size_z=self._r.getSizeZ(),
