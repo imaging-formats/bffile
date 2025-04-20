@@ -5,7 +5,7 @@ import os
 import warnings
 from contextlib import suppress
 from functools import cache
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, Mapping, Sequence, overload, AbstractSet
 
 import jpype
 import numpy as np
@@ -129,8 +129,8 @@ if TYPE_CHECKING:
     from loci.common.services import ServiceFactory
     from loci.formats import FormatTools, ImageReader, Memoizer
     from loci.formats.in_ import DynamicMetadataOptions
-    from loci.formats.services import OMEXMLService
     from loci.formats.ome import OMEPyramidStore
+    from loci.formats.services import OMEXMLService
 
 
 @overload
@@ -161,3 +161,27 @@ def jimport(classname: Literal["loci.formats.Memoizer"]) -> type[Memoizer]: ...
 def jimport(classname: str) -> Any: ...
 def jimport(classname: str) -> Any:
     return scyjava.jimport(classname)
+
+
+@jpype.JImplementationFor("java.util.Map")
+class _Map(Mapping):
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({dict(self)})"
+
+
+@jpype.JImplementationFor("java.util.List")
+class _ArrayList(Sequence):
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({list(self)})"
+
+
+@jpype.JImplementationFor("java.util.Set")
+class _Set(AbstractSet):
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({set(self)})"
+
+
+@jpype.JImplementationFor("loci.formats.CoreMetadata")
+class _CoreMetadata:
+    def __repr__(self) -> str:
+        return f"\n{self}\n"

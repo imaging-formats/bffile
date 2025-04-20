@@ -54,6 +54,7 @@ dev = [
     "rich>=14.0.0",
     "ruff>=0.11.6",
     "stubgenj>=0.2.12",
+    "ome-formats-gpl-stubs",
 ]
 
 # https://docs.astral.sh/ruff
@@ -116,7 +117,7 @@ minversion = "7.0"
 testpaths = ["tests"]
 filterwarnings = [
     "error",
-    "ignore:Failing to pass a value to the 'type_params' parameter"
+    "ignore:Failing to pass a value to the 'type_params' parameter",
 ]
 
 # https://coverage.readthedocs.io/
@@ -140,3 +141,6 @@ ignore = [".pre-commit-config.yaml", ".ruff_cache/**/*", "tests/**/*"]
 
 [tool.typos.default]
 extend-ignore-identifiers-re = ["(?i)nd2?.*", "(?i)ome", "AIMD"]
+
+[tool.uv.sources]
+ome-formats-gpl-stubs = { git = "https://github.com/tlambert03/scyjava-stubs", subdirectory = "packages/ome-formats-gpl-stubs" }

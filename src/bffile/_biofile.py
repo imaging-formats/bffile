@@ -11,6 +11,8 @@ import numpy as np
 from ome_types import OME
 from typing_extensions import Self
 
+from bffile._core_metadata import CoreMetadata, OMEShape
+
 from . import _utils
 from ._java_stuff import (
     hide_memoization_warning,
@@ -129,30 +131,43 @@ class BioFile:
 
     def set_series(self, series: int = 0) -> None:
         self._r.setSeries(series)
-        self._core_meta = _utils.CoreMeta(
-            _utils.OMEShape(
-                self._r.getSizeT(),
-                self._r.getEffectiveSizeC(),
-                self._r.getSizeZ(),
-                self._r.getSizeY(),
-                self._r.getSizeX(),
-                self._r.getRGBChannelCount(),
-            ),
-            pixtype2dtype(self._r.getPixelType(), self._r.isLittleEndian()),
-            self._r.getSeriesCount(),
-            self._r.isRGB(),
-            self._r.isInterleaved(),
-            self._r.getDimensionOrder(),
-            self._r.getResolutionCount(),
+
+        self._core_meta = CoreMetadata(
+            dtype=pixtype2dtype(self._r.getPixelType(), self._r.isLittleEndian()),
+            size_x=self._r.getSizeX(),
+            size_y=self._r.getSizeY(),
+            size_z=self._r.getSizeZ(),
+            size_c=self._r.getEffectiveSizeC(),
+            size_t=self._r.getSizeT(),
+            rgb_count=self._r.getRGBChannelCount(),
+            series_count=self._r.getSeriesCount(),
+            thumb_size_x=self._r.getThumbSizeX(),
+            thumb_size_y=self._r.getThumbSizeY(),
+            bits_per_pixel=self._r.getBitsPerPixel(),
+            image_count=self._r.getImageCount(),
+            modulo_z=self._r.getModuloZ(),
+            modulo_c=self._r.getModuloC(),
+            modulo_t=self._r.getModuloT(),
+            dimension_order=self._r.getDimensionOrder(),
+            is_order_certain=self._r.isOrderCertain(),
+            is_rgb=self._r.isRGB(),
+            is_little_endian=self._r.isLittleEndian(),
+            is_interleaved=self._r.isInterleaved(),
+            is_indexed=self._r.isIndexed(),
+            is_false_color=self._r.isFalseColor(),
+            is_metadata_complete=self._r.isMetadataComplete(),
+            is_thumbnail_series=self._r.isThumbnailSeries(),
+            series_metadata=self._r.getSeriesMetadata(),
+            resolution_count=self._r.getResolutionCount(),
         )
         self._current_scene_index = series
 
     @property
-    def core_meta(self) -> _utils.CoreMeta:
+    def core_meta(self) -> CoreMetadata:
         return self._core_meta
 
     @property
-    def shape(self) -> _utils.OMEShape:
+    def shape(self) -> OMEShape:
         return self._core_meta.shape
 
     def open(self) -> None:
