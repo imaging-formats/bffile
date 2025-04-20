@@ -33,7 +33,7 @@ dependencies = [
     "scyjava>=1.10.2",
     "dask[array]>=2024.8.0",
     "resource-backed-dask-array>=0.1.0",
-    "cjdk>=0.4.0",
+    "cjdk>=0.3.0",
 ]
 
 [project.urls]
@@ -53,8 +53,8 @@ dev = [
     "pyright>=1.1.399",
     "rich>=14.0.0",
     "ruff>=0.11.6",
-    "stubgenj>=0.2.12",
     "ome-formats-gpl-stubs",
+    "types-requests>=2.32.0.20250328",
 ]
 
 # https://docs.astral.sh/ruff
@@ -108,8 +108,7 @@ pythonVersion = "3.9"
 enableExperimentalFeatures = true
 verboseOutput = true
 venv = ".venv"
-stubPath = "./stubs"
-reportMissingModuleSource = "none"
+# reportMissingModuleSource = "none"
 
 # https://docs.pytest.org/
 [tool.pytest.ini_options]
