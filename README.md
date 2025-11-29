@@ -14,11 +14,6 @@ Yet another Bio-Formats wrapper for python
 pip install git+https://github.com/tlambert03/bffile
 ```
 
-### Install Java ...
-
-This package requires that you have java installed.  
-[INSERT GUIDELINES HERE]
-
 ## Usage
 
 ```python
@@ -30,3 +25,25 @@ with BioFile("tests/data/ND2_dims_p4z5t3c2y32x32.nd2") as bf:
     data = bf.to_numpy(series=1)
     print(data.shape, data.dtype)
 ```
+
+### Java Runtime
+
+**No manual Java installation required!**
+This package automatically downloads and manages the Java runtime using
+[cjdk](https://github.com/cachedjdk/cjdk) (via [scyjava](https://github.com/scijava/scyjava)).
+
+By default, it uses **Zulu JRE 11**. You can configure the Java version and/or
+vendor using environment variables:
+
+```bash
+# Use Adoptium JDK 17
+export BFF_JAVA_VERSION=17
+export BFF_JAVA_VENDOR=adoptium
+
+# Use Temurin JDK 21
+export BFF_JAVA_VERSION=21
+export BFF_JAVA_VENDOR=temurin
+```
+
+Available vendors: `zulu-jre`, `zulu`, `adoptium`, `temurin`, and
+[other vendors listed in cjdk](https://github.com/cachedjdk/cjdk)
