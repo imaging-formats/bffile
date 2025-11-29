@@ -13,11 +13,11 @@ name = "bffile"
 dynamic = ["version"]
 description = "Yet another Bio-Formats wrapper for python"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "BSD-3-Clause" }
 authors = [{ name = "Talley Lambert", email = "talley.lambert@gmail.com" }]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: BSD License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
@@ -46,19 +46,20 @@ test = ["pytest>=8.3.5", "pytest-cov>=6.1.1", "requests>=2.32.3"]
 dev = [
     { include-group = "test" },
     "ipython>=8.18.1",
-    "mypy>=1.15.0",
     "pdbpp>=0.11.6 ; sys_platform != 'win32'",
-    "pre-commit>=4.2.0",
-    "pyright>=1.1.399",
+    "prek>=0.2.19",
     "rich>=14.0.0",
     "ruff>=0.11.6",
+    "ty>=0.0.1a29",
 ]
 
 # https://docs.astral.sh/ruff
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 src = ["src"]
+fix = true
+unsafe-fixes = true
 
 # https://docs.astral.sh/ruff/rules
 [tool.ruff.lint]

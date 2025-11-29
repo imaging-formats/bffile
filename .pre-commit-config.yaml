@@ -9,24 +9,29 @@ repos:
     hooks:
       - id: validate-pyproject
 
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.9
+    hooks:
+      - id: actionlint
+
   - repo: https://github.com/crate-ci/typos
-    rev: v1.31.1
+    rev: v1.40.0
     hooks:
       - id: typos
         args: [--force-exclude] # omitting --write-changes
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.6
+    rev: v0.14.7
     hooks:
-      - id: ruff
-        args: [--fix, --unsafe-fixes]
+      - id: ruff-check
       - id: ruff-format
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
+  - repo: local
     hooks:
-      - id: mypy
-        files: "^src/"
-        # you have to add the things you want to type check against here
-        additional_dependencies:
-          - numpy
+      - id: ty-check
+        name: ty-check
+        language: python
+        entry: ty check
+        pass_filenames: false
+        args: [--python=.venv/]
+        additional_dependencies: [ty]

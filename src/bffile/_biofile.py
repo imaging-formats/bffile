@@ -9,8 +9,9 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import dask.array as da
 import numpy as np
 from ome_types import OME
-from scyjava import jimport
 from typing_extensions import Self
+
+from scyjava import jimport
 
 from . import _utils
 from ._java_stuff import hide_memoization_warning, pixtype2dtype, redirect_java_logging
