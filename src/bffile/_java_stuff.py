@@ -17,10 +17,15 @@ MAVEN_COORDINATE = "ome:formats-gpl:RELEASE"
 # Configure Java constraints from environment variables
 # BFF_JAVA_VENDOR: Java vendor (e.g., "zulu-jre", "adoptium", "temurin")
 # BFF_JAVA_VERSION: Java version (e.g., "11", "17", "21")
-_bff_vendor = os.getenv("BFF_JAVA_VENDOR")
-_bff_version = os.getenv("BFF_JAVA_VERSION")
-if _bff_vendor is not None or _bff_version is not None:
-    scyjava.config.set_java_constraints(vendor=_bff_vendor, version=_bff_version)
+_bff_vendor = os.getenv("BFF_JAVA_VENDOR") or None
+_bff_version = os.getenv("BFF_JAVA_VERSION") or None
+if _bff_vendor or _bff_version:
+    _kwargs = {}
+    if _bff_vendor:
+        _kwargs["vendor"] = _bff_vendor
+    if _bff_version:
+        _kwargs["version"] = _bff_version
+    scyjava.config.set_java_constraints(**_kwargs)
 
 # Check if the BIOFORMATS_VERSION environment variable is set
 # and if so, use it as the Maven coordinate

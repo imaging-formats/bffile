@@ -13,7 +13,9 @@ import bffile._java_stuff  # noqa: F401
 import scyjava
 scyjava.start_jvm()
 System = scyjava.jimport("java.lang.System")
-print(System.getProperty("java.version"))
+print(f"VERSION:{System.getProperty('java.version')}")
+print(f"JAVA_HOME:{System.getProperty('java.home')}")
+print(f"VENDOR:{System.getProperty('java.vendor')}")
 """
 
 
@@ -51,8 +53,21 @@ def test_bff_java_constraints(vendor: str, version: str) -> None:
         check=True,
     )
 
-    java_version = result.stdout.strip().split("\n")[-1]
+    # Parse output
+    output_lines = result.stdout.strip().split("\n")
+    info = {}
+    for line in output_lines:
+        if ":" in line:
+            key, value = line.split(":", 1)
+            info[key] = value
+
+    java_version = info.get("VERSION", "")
+    java_home = info.get("JAVA_HOME", "")
+    java_vendor = info.get("VENDOR", "")
+
     assert java_version.startswith(f"{version}."), (
         f"Expected Java {version}, got {java_version}\n"
+        f"JAVA_HOME: {java_home}\n"
+        f"Vendor: {java_vendor}\n"
         f"Subprocess stderr: {result.stderr}"
     )
