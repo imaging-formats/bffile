@@ -1,4 +1,4 @@
-name: prek + auto-fix
+name: pre-commit
 on:
   pull_request:
     types: [opened, synchronize, reopened]
