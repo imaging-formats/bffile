@@ -42,9 +42,17 @@ def test_bff_java_constraints(vendor: str, version: str) -> None:
     if version:
         env["BFF_JAVA_VERSION"] = version
 
-    result = subprocess.check_output([sys.executable, "-c", SCRIPT], env=env)
+    result = subprocess.run(
+        [sys.executable, "-c", SCRIPT],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=180,  # 3 minutes for Java download
+        check=True,
+    )
 
-    java_version = result.decode().strip().split("\n")[-1]
+    java_version = result.stdout.strip().split("\n")[-1]
     assert java_version.startswith(f"{version}."), (
-        f"Expected Java {version}, got {java_version}"
+        f"Expected Java {version}, got {java_version}\n"
+        f"Subprocess stderr: {result.stderr}"
     )
