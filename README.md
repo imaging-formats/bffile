@@ -28,12 +28,15 @@ with BioFile("tests/data/ND2_dims_p4z5t3c2y32x32.nd2") as bf:
 
 ### Java Runtime
 
-**No manual Java installation required!**
-This package automatically downloads and manages the Java runtime using
-[cjdk](https://github.com/cachedjdk/cjdk) (via [scyjava](https://github.com/scijava/scyjava)).
+> [!TIP]
+> **No manual Java installation required!**  
+>
+> This package automatically downloads and manages the Java runtime using
+> [cjdk](https://github.com/cachedjdk/cjdk) (via [scyjava](https://github.com/scijava/scyjava)).
 
-By default, it uses **Zulu JRE 11**. You can configure the Java version and/or
-vendor using environment variables:
+By default, scyjava uses **Zulu JRE 11** (defined
+[here](https://github.com/scijava/scyjava/blob/a2b8bed0a07a87d4c9b715a6dddaad308080f440/src/scyjava/config.py#L15-L20)).
+You can configure the Java version and/or vendor using environment variables:
 
 ```bash
 # Use Adoptium JDK 17
