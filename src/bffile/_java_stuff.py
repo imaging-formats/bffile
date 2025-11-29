@@ -25,6 +25,8 @@ if _bff_vendor or _bff_version:
         _kwargs["vendor"] = _bff_vendor
     if _bff_version:
         _kwargs["version"] = _bff_version
+    # Force cjdk to always be used when constraints are set, even if system Java exists
+    _kwargs["fetch"] = "always"
     scyjava.config.set_java_constraints(**_kwargs)
 
 # Check if the BIOFORMATS_VERSION environment variable is set
