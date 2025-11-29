@@ -9,9 +9,8 @@ from typing import Any
 
 import jpype
 import numpy as np
-import scyjava.config
-
 import scyjava
+import scyjava.config
 
 MAVEN_COORDINATE = "ome:formats-gpl:RELEASE"
 
