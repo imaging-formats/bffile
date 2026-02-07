@@ -87,12 +87,9 @@ class BioFile:
 
         self._path = str(Path(path).expanduser().absolute())
         self._r = ImageReader()
-        if meta:
-            self._r.setMetadataStore(self._create_ome_meta())
-        if original_meta:
-            self._r.setOriginalMetadataPopulated(True)
 
         # memoize to save time on later re-openings of the same file.
+        # Note: Memoizer must wrap the reader BEFORE setMetadataStore is called
         if memoize > 0:
             Memoizer = jimport("loci.formats.Memoizer")
             hide_memoization_warning()
@@ -100,6 +97,11 @@ class BioFile:
                 self._r = Memoizer(self._r, memoize, BIOFORMATS_MEMO_DIR)
             else:
                 self._r = Memoizer(self._r, memoize)
+
+        if meta:
+            self._r.setMetadataStore(self._create_ome_meta())
+        if original_meta:
+            self._r.setOriginalMetadataPopulated(True)
 
         if options:
             DynamicMetadataOptions = jimport("loci.formats.in_.DynamicMetadataOptions")
@@ -109,6 +111,7 @@ class BioFile:
             self._r.setMetadataOptions(mo)
 
         self._current_scene_index = series
+        self._is_open = False
         self.open()
         self._lock = Lock()
         self.set_series(series)
@@ -153,13 +156,16 @@ class BioFile:
 
     def open(self) -> None:
         """Open file."""
-        self._r.setId(self._path)
-        self._r.setSeries(self._current_scene_index)
+        if not self._is_open:
+            self._r.setId(self._path)
+            self._r.setSeries(self._current_scene_index)
+            self._is_open = True
 
     def close(self) -> None:
         """Close file."""
         with suppress(Exception):
             self._r.close()
+            self._is_open = False
 
     def to_numpy(self, series: int | None = None) -> np.ndarray:
         """Create numpy array for the specified or current series.
