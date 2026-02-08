@@ -6,12 +6,22 @@ on:
     tags: [v*]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # run once a month on the first day of the month at 00:00
+    - cron: "0 0 1 * *"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  pyright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+      - run: uv run pyright
+
   test:
     name: Test ${{ matrix.os }} py${{ matrix.python-version }} java${{ matrix.java-version }}
     runs-on: ${{ matrix.os }}
@@ -21,28 +31,66 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         os: [ubuntu-latest, macos-latest, windows-latest]
         java-version: ["11"]
+        bioformats-version: [""]
+        resolution: ["highest"]
         include:
-          # - os: ubuntu-latest
-          #   python-version: "3.10"
-          #   java-version: "8"
-          - os: ubuntu-latest
-            python-version: "3.11"
-            java-version: "17"
+          # java variants
+          - os: windows-latest
+            python-version: "3.10"
+            java-version: "8"
           - os: ubuntu-latest
             python-version: "3.12"
+            java-version: "17"
+          - os: ubuntu-latest
+            python-version: "3.14"
             java-version: "21"
+          # bioformats-versions
+          - os: ubuntu-latest
+            python-version: "3.10"
+            java-version: "8"
+            bioformats-version: "6.0.1"
+          # lowest-resolution variants
+          - os: ubuntu-latest
+            python-version: "3.10"
+            java-version: "11"
+            resolution: "lowest-direct"
+          - os: windows-latest
+            python-version: "3.12"
+            java-version: "21"
+            resolution: "lowest-direct"
+
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
+
+      - name: Install Dependencies
+        run: uv sync --group test
+        env:
+          UV_NO_DEV: 1
+          UV_RESOLUTION: ${{ matrix.resolution }}
+          UV_PRERELEASE: ${{ github.event_name == 'schedule' && 'allow' || 'if-necessary-or-explicit' }}
+
       - name: Test
-        run: uv run --group test --no-dev pytest -v --color yes --cov --cov-report=xml
+        run: uv run --no-sync coverage run -p -m pytest -v
         env:
           BFF_JAVA_VERSION: ${{ matrix.java-version }}
-      - uses: codecov/codecov-action@v5
+          BIOFORMATS_VERSION: ${{matrix.bioformats-version}}
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v6
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          name: covreport-${{ matrix.os }}-py${{ matrix.python-version }}-${{ matrix.bioformats-version }}-${{ matrix.java-version }}-${{ matrix.resolution }}
+          path: ./.coverage*
+          include-hidden-files: true
+
+  upload_coverage:
+    if: always()
+    needs: [test]
+    uses: pyapp-kit/workflows/.github/workflows/upload-coverage.yml@v2
+    secrets:
+      codecov_token: ${{ secrets.CODECOV_TOKEN }}
 
   build-and-inspect-package:
     name: Build & inspect package.

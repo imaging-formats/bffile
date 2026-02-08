@@ -110,5 +110,6 @@ ENV/
 .vscode/
 .idea/
 tests/data/
-bioformats/
 uv.lock
+# ignore cloned bioformats repo (if used for development)
+bioformats/

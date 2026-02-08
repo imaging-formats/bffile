@@ -121,7 +121,7 @@ class BioFile:
 
         if self.dask_tiles:
             if tile_size is None:
-                self.tile_size = (
+                self.tile_size: tuple[int, int] = (
                     self._java_reader.getOptimalTileHeight(),
                     self._java_reader.getOptimalTileWidth(),
                 )

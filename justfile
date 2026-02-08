@@ -6,3 +6,6 @@ test:
 
 check:
     uv run prek -a --hook-stage=manual
+
+clone-bioformats:
+    git clone https://github.com/ome/bioformats

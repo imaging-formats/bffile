@@ -66,3 +66,9 @@ the following happens:
 
 This happens automatically on first import, with subsequent imports reusing
 cached JDK and JARs for fast startup.
+
+## Using Claude
+
+If (like me) you don't have a *ton* of familiarity with the Bio-Formats java codebase,
+it can be helpful to use an LLM to navigate the code. The `CLAUDE.md` file explains
+to Claude how to clone the bioformats repo into a local dir and where to find key files.
