@@ -56,11 +56,11 @@ jobs:
             bioformats-version: "6.0.1"
           # lowest-resolution variants
           - os: ubuntu-latest
-            python-version: "3.10"
+            python-version: "3.11"
             java-version: "11"
             resolution: "lowest-direct"
           - os: windows-latest
-            python-version: "3.12"
+            python-version: "3.13"
             java-version: "21"
             resolution: "lowest-direct"
 
