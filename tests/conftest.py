@@ -77,13 +77,19 @@ def pytest_sessionstart() -> None:
         faulthandler.disable()
 
 
-# register pytest --allow-cache option
+# register pytest options
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--allow-cache",
         action="store_true",
         default=False,
         help="Allow cache to be used for tests",
+    )
+    parser.addoption(
+        "--test-java-constraints",
+        action="store_true",
+        default=False,
+        help="Run slow integration tests for Java constraints",
     )
 
 

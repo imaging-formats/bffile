@@ -19,12 +19,48 @@ print(f"VENDOR:{System.getProperty('java.vendor')}")
 """
 
 
+def test_java_constraints_unit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit test: verify env vars are correctly passed to scyjava.
+
+    This is a fast unit test that mocks scyjava to verify that bffile
+    correctly reads BFF_JAVA_* env vars and passes them to scyjava.
+    """
+    from unittest.mock import MagicMock, patch
+
+    # Set up environment variables
+    monkeypatch.setenv("BFF_JAVA_VENDOR", "temurin")
+    monkeypatch.setenv("BFF_JAVA_VERSION", "17")
+    monkeypatch.setenv("BFF_JAVA_FETCH", "prefer")
+
+    # Mock scyjava.config before importing _java_stuff
+    mock_config = MagicMock()
+    with patch("scyjava.config", mock_config):
+        # Force reimport to trigger the env var logic
+        if "bffile._java_stuff" in sys.modules:
+            del sys.modules["bffile._java_stuff"]
+
+        import bffile._java_stuff  # noqa: F401
+
+        # Verify scyjava.config.set_java_constraints was called correctly
+        mock_config.set_java_constraints.assert_called_once_with(
+            vendor="temurin", version="17", fetch="prefer"
+        )
+
+
+@pytest.mark.skipif(
+    "not config.getoption('--test-java-constraints')",
+    reason="Slow integration test, use --test-java-constraints to run",
+)
 @pytest.mark.parametrize(
     "vendor,version",
     [("", "17"), ("", "21"), ("adoptium", "17"), ("temurin", "21"), ("zulu-jre", "11")],
 )
-def test_bff_java_constraints(vendor: str, version: str) -> None:
-    """Test BFF_JAVA_VENDOR and BFF_JAVA_VERSION environment variables."""
+def test_bff_java_constraints_integration(vendor: str, version: str) -> None:
+    """Integration test: verify Java constraints work end-to-end.
+
+    This is a slow integration test that downloads JDKs and JARs.
+    Only run with --test-java-constraints flag.
+    """
     env = os.environ.copy()
 
     # Remove BFF and Java-related variables
@@ -50,8 +86,16 @@ def test_bff_java_constraints(vendor: str, version: str) -> None:
         capture_output=True,
         text=True,
         timeout=180,  # 3 minutes for Java download
-        check=True,
+        check=False,  # Don't raise on error, handle manually
     )
+
+    # If subprocess failed, print full stderr for debugging
+    if result.returncode != 0:
+        pytest.fail(
+            f"Subprocess failed with exit code {result.returncode}\n"
+            f"STDOUT:\n{result.stdout}\n"
+            f"STDERR:\n{result.stderr}"
+        )
 
     # Parse output
     output_lines = result.stdout.strip().split("\n")
