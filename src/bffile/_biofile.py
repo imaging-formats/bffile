@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import os
+import sys
 import warnings
+import weakref
 from contextlib import suppress
 from pathlib import Path
-from threading import Lock
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from threading import RLock
+from typing import TYPE_CHECKING, Any, ClassVar
 
+import jpype
 import numpy as np
 from ome_types import OME
 from typing_extensions import Self
@@ -33,10 +36,15 @@ if _BFDIR:
 class BioFile:
     """Read image and metadata from file supported by Bioformats.
 
-    BioFile instances must be closed using the 'close' method, which is
-    automatically called when using the 'with' context manager.
+    BioFile instances must be explicitly opened before use, either by:
+    1. Using a context manager: `with BioFile(path) as bf: ...`
+    2. Explicitly calling `open()` and `close()`:
+       `bf = BioFile(path); bf.open(); ...; bf.close()`
 
-    BioFile instances are not thread-safe.
+    The recommended pattern is to use the context manager, which automatically
+    handles opening and closing the file.
+
+    BioFile instances are not thread-safe. Create separate instances per thread.
 
     Parameters
     ----------
@@ -86,61 +94,71 @@ class BioFile:
     ):
         self._path = str(Path(path).expanduser().absolute())
         self._current_scene_index = series
-        self._is_open = False
-        self._lock = Lock()
+        self._lock = RLock()
         self.dask_tiles = dask_tiles
 
-        self._java_reader = jimport("loci.formats.ImageReader")()
+        if tile_size is not None:
+            if len(tile_size) != 2:
+                raise ValueError(f"tile_size must be length 2, got {len(tile_size)}")
+            if not all(isinstance(x, int) for x in tile_size):
+                raise ValueError(f"tile_size must be integers, got {tile_size}")
+            tile_size = tuple(tile_size)  # type: ignore[assignment]
 
-        # memoize to save time on later re-openings of the same file.
-        # Note: Memoizer must wrap the reader BEFORE setMetadataStore is called
-        if memoize > 0:
-            Memoizer = jimport("loci.formats.Memoizer")
-            if BIOFORMATS_MEMO_DIR is not None:
-                self._java_reader = Memoizer(
-                    self._java_reader, memoize, BIOFORMATS_MEMO_DIR
-                )
-            else:
-                self._java_reader = Memoizer(self._java_reader, memoize)
+        self._tile_size_override = tile_size
+        self._meta = meta
+        self._original_meta = original_meta
+        self._memoize = memoize
+        self._options = options
 
-        if meta:
-            self._java_reader.setMetadataStore(self._create_ome_meta())
-        if original_meta:
-            self._java_reader.setOriginalMetadataPopulated(True)
-
-        if options:
-            DynamicMetadataOptions = jimport("loci.formats.in_.DynamicMetadataOptions")
-            mo = DynamicMetadataOptions()
-            for name, value in options.items():
-                mo.set(name, str(value))
-            self._java_reader.setMetadataOptions(mo)
-
-        self.open()
-        self.set_series(series)
-
-        if self.dask_tiles:
-            if tile_size is None:
-                self.tile_size: tuple[int, int] = (
-                    self._java_reader.getOptimalTileHeight(),
-                    self._java_reader.getOptimalTileWidth(),
-                )
-            else:
-                if len(tiles := tuple(tile_size)) != 2:
-                    raise ValueError(f"tile_size must be length 2, got {len(tiles)}")
-                if not all(isinstance(x, int) for x in tiles):
-                    raise ValueError(f"tile_size must be integers, got {tiles}")
-                self.tile_size = cast("tuple[int, int]", tiles)
+        # Reader and finalizer created in open()
+        self._java_reader: IFormatReader | None = None
+        self._core_meta_list: list[CoreMetadata] | None = None
+        self._finalizer: weakref.finalize | None = None
 
     def set_series(self, series: int = 0) -> None:
-        self._java_reader.setSeries(series)
-        self._current_scene_index = series
+        """Set the current image series.
+
+        Parameters
+        ----------
+        series : int
+            Series index to select
+
+        Raises
+        ------
+        RuntimeError
+            If file is not open
+        """
+        with self._lock:
+            if self.closed:
+                raise RuntimeError("Cannot set series on closed file")
+            self.java_reader().setSeries(series)
+            self._current_scene_index = series
 
     def java_reader(self) -> IFormatReader:
-        """Return the native reader object."""
+        """Return the native reader object.
+
+        Raises
+        ------
+        RuntimeError
+            If file is not open
+        """
+        if self.closed:  # Uses finalizer.alive under the hood
+            raise RuntimeError("File not open - call open() first")
+        if self._java_reader is None:  # Should never happen, but type safety
+            raise RuntimeError("Internal error: reader not initialized")
         return self._java_reader
 
     @property
     def core_meta(self) -> CoreMetadata:
+        """Get metadata for current series.
+
+        Raises
+        ------
+        RuntimeError
+            If file is not open
+        """
+        if self._core_meta_list is None:
+            raise RuntimeError("File not open - call open() first")
         return self._core_meta_list[self._current_scene_index]
 
     @property
@@ -152,21 +170,94 @@ class BioFile:
         return self.core_meta.dtype
 
     def open(self) -> None:
-        """Open file."""
-        if not self._is_open:
-            self._java_reader.setId(self._path)
-            self._java_reader.setSeries(self._current_scene_index)
-            self._core_meta_list = [
-                CoreMetadata.from_java(x)
-                for x in self._java_reader.getCoreMetadataList()
-            ]
-            self._is_open = True
+        """Open file and initialize reader.
+
+        Safe to call multiple times - will only initialize once.
+        If file is already open, this is a no-op.
+        """
+        with self._lock:
+            # If already open, nothing to do
+            if self._java_reader is not None:
+                return
+
+            # Create reader
+            self._java_reader = jimport("loci.formats.ImageReader")()
+
+            # Wrap with Memoizer if requested
+            # Note: Memoizer MUST wrap before setMetadataStore
+            if self._memoize > 0:
+                Memoizer = jimport("loci.formats.Memoizer")
+                if BIOFORMATS_MEMO_DIR is not None:
+                    self._java_reader = Memoizer(
+                        self._java_reader, self._memoize, BIOFORMATS_MEMO_DIR
+                    )
+                else:
+                    self._java_reader = Memoizer(self._java_reader, self._memoize)
+
+            # Configure reader
+            if self._meta:
+                self._java_reader.setMetadataStore(self._create_ome_meta())
+            if self._original_meta:
+                self._java_reader.setOriginalMetadataPopulated(True)
+
+            if self._options:
+                DynamicMetadataOptions = jimport(
+                    "loci.formats.in_.DynamicMetadataOptions"
+                )
+                mo = DynamicMetadataOptions()
+                for name, value in self._options.items():
+                    mo.set(name, str(value))
+                self._java_reader.setMetadataOptions(mo)
+
+            # Open file - this is the critical operation that can fail
+            try:
+                self._java_reader.setId(self._path)
+
+                # Cache metadata
+                self._core_meta_list = [
+                    CoreMetadata.from_java(x)
+                    for x in self._java_reader.getCoreMetadataList()
+                ]
+
+                # Set the series specified in __init__
+                # Note: set_series() acquires lock, but we already have it
+                # So we call the Java method directly here
+                self._java_reader.setSeries(self._current_scene_index)
+
+                # Setup tile size if needed
+                if self.dask_tiles:
+                    if self._tile_size_override is None:
+                        self.tile_size: tuple[int, int] = (
+                            self._java_reader.getOptimalTileHeight(),
+                            self._java_reader.getOptimalTileWidth(),
+                        )
+                    else:
+                        self.tile_size = self._tile_size_override
+
+                # The finalizer's alive state is now the source of truth for open/closed
+                self._finalizer = weakref.finalize(
+                    self, _close_java_reader, self._java_reader
+                )
+
+            except Exception:
+                self.close()
+                raise
 
     def close(self) -> None:
-        """Close file."""
-        with suppress(Exception):
-            self._java_reader.close()
-            self._is_open = False
+        """Close file and release resources.
+
+        Safe to call multiple times - will only close once.
+        After closing, the BioFile instance can be reopened by calling open().
+        """
+        with self._lock:
+            # Call the finalizer if it exists
+            if self._finalizer is not None:
+                self._finalizer()
+                self._finalizer = None
+
+            # Clear cached references
+            self._java_reader = None
+            self._core_meta_list = None
 
     def to_numpy(self, series: int | None = None) -> np.ndarray:
         """Create numpy array for the specified or current series.
@@ -208,6 +299,9 @@ class BioFile:
                 "Please install with `pip install bffile[dask]`"
             ) from e
 
+        if self._java_reader is None:
+            raise RuntimeError("File not open - call open() first")
+
         if series is not None:
             self._java_reader.setSeries(series)
 
@@ -230,8 +324,8 @@ class BioFile:
 
     @property
     def closed(self) -> bool:
-        """Whether the underlying file is currently open."""
-        return not bool(self._java_reader.getCurrentFile())
+        """Whether the underlying file is currently closed."""
+        return self._java_reader is None
 
     @property
     def filename(self) -> str:
@@ -242,7 +336,8 @@ class BioFile:
     @property
     def ome_xml(self) -> str:
         """Return OME XML string."""
-        if store := self._java_reader.getMetadataStore():
+        reader = self.java_reader()
+        if store := reader.getMetadataStore():
             try:
                 # get metadatastore can return various types of objects,
                 # only the OME pyramidal metadata has dumpXML method,
@@ -264,14 +359,13 @@ class BioFile:
         return OME.from_xml(xml)
 
     def __enter__(self) -> Self:
-        self.open()
+        """Enter context manager - ensures file is open."""
+        self.open()  # Idempotent, so safe to call
         return self
 
-    def __exit__(self, *args: Any) -> None:
-        self.close()
-
-    def __del__(self) -> None:
-        self.close()
+    def __exit__(self, *_args: Any) -> None:
+        """Exit context manager - ensures file is closed."""
+        self.close()  # Idempotent, so safe to call
 
     def _get_plane(
         self,
@@ -282,6 +376,8 @@ class BioFile:
         x: slice | None = None,
     ) -> np.ndarray:
         """Load bytes from a single plane.
+
+        The file must be open before calling this method.
 
         Parameters
         ----------
@@ -300,11 +396,25 @@ class BioFile:
         -------
         np.ndarray
             array of requested bytes.
+
+        Raises
+        ------
+        RuntimeError
+            If file is not open
         """
         with self._lock:
-            was_open = not self.closed
-            if not was_open:
-                self.open()
+            # Don't auto-reopen - require explicit open
+            if self.closed:
+                raise RuntimeError(
+                    "Cannot read from closed file. "
+                    "Call open() first or use a context manager: "
+                    "with BioFile(...) as bf:"
+                )
+
+            if self._java_reader is None or self._core_meta_list is None:
+                raise RuntimeError(
+                    "Metadata not initialized - file may not be properly opened"
+                )
 
             shape = self.core_meta.shape
 
@@ -329,9 +439,6 @@ class BioFile:
                     im = np.transpose(im, (1, 2, 0))
             else:
                 im.shape = (ywidth, xwidth)
-
-            if not was_open:
-                self.close()
 
         return im
 
@@ -375,3 +482,20 @@ class BioFile:
         """Get the version of Bio-Formats."""
         Version = jimport("loci.formats.FormatTools")
         return str(getattr(Version, "VERSION", "unknown"))
+
+
+def _close_java_reader(java_reader: IFormatReader | None) -> None:
+    """Close a Java reader if JVM is still running.
+
+    Used as weakref finalizer for last-resort cleanup. This can ONLY close
+    the Java file handle - it cannot access Python instance state because
+    it's called after the BioFile instance is garbage collected.
+
+    For explicit cleanup, use the BioFile.close() method instead.
+    """
+    if java_reader is None:
+        return
+    # Only attempt close during normal operation (not shutdown)
+    if not sys.is_finalizing() and jpype.isJVMStarted():
+        with suppress(Exception):
+            java_reader.close()
