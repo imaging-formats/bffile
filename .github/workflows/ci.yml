@@ -23,7 +23,7 @@ jobs:
       - run: uv run pyright
 
   test:
-    name: Test ${{ matrix.os }} py${{ matrix.python-version }} java${{ matrix.java-version }}
+    name: Test ${{ matrix.os }} py${{ matrix.python-version }} java${{ matrix.java-version }} bf${{ matrix.bioformats-version }} ${{ matrix.resolution == 'highest' && '' || matrix.resolution }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
