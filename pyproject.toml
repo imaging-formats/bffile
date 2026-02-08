@@ -26,7 +26,11 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
-dependencies = ["numpy>=2.1.0", "ome-types[pint,lxml]>=0.6.1", "scyjava>=1.12"]
+dependencies = [
+    "numpy>=2.1.0",
+    "ome-types[pint,lxml]>=0.6.2",
+    "scyjava>=1.12.0",
+]
 
 [project.urls]
 homepage = "https://github.com/tlambert03/bffile"
@@ -53,6 +57,9 @@ dev = [
     "ruff>=0.11.6",
     "types-requests>=2.32.0.20250328",
 ]
+
+[tool.uv.sources]
+bffile = { workspace = true }
 
 # https://docs.astral.sh/ruff
 [tool.ruff]
