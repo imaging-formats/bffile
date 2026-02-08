@@ -81,7 +81,7 @@ class CoreMetadata:
             modulo_z=meta.moduloZ,
             modulo_c=meta.moduloC,
             modulo_t=meta.moduloT,
-            dimension_order=meta.dimensionOrder,
+            dimension_order=str(meta.dimensionOrder),
             is_order_certain=meta.orderCertain,
             is_rgb=meta.rgb,
             is_little_endian=meta.littleEndian,

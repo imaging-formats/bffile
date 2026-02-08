@@ -18,7 +18,7 @@ from . import _utils
 from ._jimports import jimport
 
 if TYPE_CHECKING:
-    from loci.formats import ImageReader
+    from loci.formats import IFormatReader
     from resource_backed_dask_array import ResourceBackedDaskArray
 
 
@@ -133,7 +133,7 @@ class BioFile:
         self._java_reader.setSeries(series)
         self._current_scene_index = series
 
-    def java_reader(self) -> ImageReader:
+    def java_reader(self) -> IFormatReader:
         """Return the native reader object."""
         return self._java_reader
 
