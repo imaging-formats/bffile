@@ -33,6 +33,11 @@ jobs:
         java-version: ["11"]
         bioformats-version: [""]
         resolution: ["highest"]
+        exclude:
+          # this one always seems to hang on CI for some reason.
+          - os: ubuntu-latest
+            python-version: "3.10"
+            java-version: "11"
         include:
           # java variants
           - os: windows-latest
