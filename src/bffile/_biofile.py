@@ -271,8 +271,28 @@ class BioFile:
         series : int, optional
             The series index to retrieve, by default None
         """
-        # TODO: make going through dask optional
-        return np.asarray(self.to_dask(series))
+        if self._java_reader is None:
+            raise RuntimeError("File not open - call open() first")
+
+        if series is not None:
+            self._java_reader.setSeries(series)
+
+        nt, nc, nz, ny, nx, nrgb = self.core_meta.shape
+
+        # Create output array with appropriate shape
+        if nrgb > 1:
+            output = np.empty((nt, nc, nz, ny, nx, nrgb), dtype=self.core_meta.dtype)
+        else:
+            output = np.empty((nt, nc, nz, ny, nx), dtype=self.core_meta.dtype)
+
+        # Fill in each plane
+        for t in range(nt):
+            for c in range(nc):
+                for z in range(nz):
+                    plane = self._get_plane(t, c, z)
+                    output[t, c, z] = plane
+
+        return output
 
     def to_dask(self, series: int | None = None) -> ResourceBackedDaskArray:
         """Create dask array for the specified or current series.
