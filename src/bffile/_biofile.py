@@ -7,7 +7,6 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
-import dask.array as da
 import numpy as np
 from ome_types import OME
 from typing_extensions import Self
@@ -200,7 +199,14 @@ class BioFile:
         -------
         ResourceBackedDaskArray
         """
-        from resource_backed_dask_array import resource_backed_dask_array
+        try:
+            import dask.array as da
+            from resource_backed_dask_array import resource_backed_dask_array
+        except ImportError as e:
+            raise ImportError(
+                "Dask and resource-backed-dask-array are required for to_dask(). "
+                "Please install with `pip install bffile[dask]`"
+            ) from e
 
         if series is not None:
             self._java_reader.setSeries(series)

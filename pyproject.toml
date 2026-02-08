@@ -26,22 +26,22 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
-dependencies = [
-    "numpy>=2.0.2",
-    "ome-types[pint,lxml]>=0.6.1",
-    "scyjava>=1.12",
-    "dask[array]>=2024.8.0",
-    "resource-backed-dask-array>=0.1.0",
-]
+dependencies = ["numpy>=2.0.2", "ome-types[pint,lxml]>=0.6.1", "scyjava>=1.12"]
 
 [project.urls]
 homepage = "https://github.com/tlambert03/bffile"
 repository = "https://github.com/tlambert03/bffile"
 
 [project.optional-dependencies]
+dask = ["dask[array]>=2024.8.0", "resource-backed-dask-array>=0.1.0"]
 
 [dependency-groups]
-test = ["pytest>=8.3.5", "pytest-cov>=6.1.1", "requests>=2.32.3"]
+test = [
+    "bffile[dask]",
+    "pytest>=8.3.5",
+    "pytest-cov>=6.1.1",
+    "requests>=2.32.3",
+]
 dev = [
     { include-group = "test" },
     "ipython>=8.18.1",
