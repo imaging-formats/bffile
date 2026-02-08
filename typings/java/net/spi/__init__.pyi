@@ -1,0 +1,43 @@
+import typing
+from typing import Protocol
+
+import java.lang
+import java.net
+import java.util.stream
+import jpype
+
+class InetAddressResolver:
+    def lookupByAddress(
+        self, byteArray: list[int] | jpype.JArray | bytes
+    ) -> java.lang.String: ...
+    def lookupByName(
+        self,
+        string: java.lang.String | str,
+        lookupPolicy: InetAddressResolver.LookupPolicy,
+    ) -> java.util.stream.Stream[java.net.InetAddress]: ...
+    class LookupPolicy:
+        IPV4: typing.ClassVar[int] = ...
+        IPV6: typing.ClassVar[int] = ...
+        IPV4_FIRST: typing.ClassVar[int] = ...
+        IPV6_FIRST: typing.ClassVar[int] = ...
+        def characteristics(self) -> int: ...
+        @staticmethod
+        def of(int: int) -> InetAddressResolver.LookupPolicy: ...
+
+class InetAddressResolverProvider:
+    def get(
+        self, configuration: InetAddressResolverProvider.Configuration
+    ) -> InetAddressResolver: ...
+    def name(self) -> java.lang.String: ...
+    class Configuration:
+        def builtinResolver(self) -> InetAddressResolver: ...
+        def lookupLocalHostName(self) -> java.lang.String: ...
+
+class URLStreamHandlerProvider(java.net.URLStreamHandlerFactory): ...
+
+class __module_protocol__(Protocol):
+    # A module protocol which reflects the result of ``jp.JPackage("java.net.spi")``.
+
+    InetAddressResolver: type[InetAddressResolver]
+    InetAddressResolverProvider: type[InetAddressResolverProvider]
+    URLStreamHandlerProvider: type[URLStreamHandlerProvider]

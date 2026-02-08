@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import warnings
-from contextlib import suppress
 from functools import cache
 from typing import Any
 
 import jpype
-import numpy as np
 import scyjava
 import scyjava.config
 
@@ -31,7 +30,7 @@ if _bff_vendor or _bff_version:
 
 # Check if the BIOFORMATS_VERSION environment variable is set
 # and if so, use it as the Maven coordinate
-if (coord := os.getenv("BIOFORMATS_VERSION", None)) is not None:
+if coord := os.getenv("BIOFORMATS_VERSION", ""):
     # allow a single version number to be passed
     if ":" not in coord and all(x.isdigit() for x in coord.split(".")):
         # if the coordinate is just a version number, use the default group and artifact
@@ -70,17 +69,9 @@ handler.setFormatter(logging.Formatter(fmt=fmt, datefmt=datefmt))
 if not any(isinstance(h, logging.StreamHandler) for h in LOGGER.handlers):
     LOGGER.addHandler(handler)
 
-_LOGGING_REDIRECTED = False
-
 
 def redirect_java_logging(logger: logging.Logger | None = None) -> None:
     """Redirect Java logging to Python logger."""
-    global _LOGGING_REDIRECTED
-    if _LOGGING_REDIRECTED:
-        return
-
-    scyjava.start_jvm()  # won't start if already running
-
     _logger = logger or LOGGER
 
     class PyAppender:
@@ -91,6 +82,9 @@ def redirect_java_logging(logger: logging.Logger | None = None) -> None:
             # dispatch to Python logger
             getattr(logger, level.lower(), _logger.info)(msg)
 
+        def getName(self) -> str:
+            return "PyAppender"
+
     # Create a proxy for the Appender interface
     proxy = jpype.JProxy("ch.qos.logback.core.Appender", inst=PyAppender())
 
@@ -99,31 +93,13 @@ def redirect_java_logging(logger: logging.Logger | None = None) -> None:
     root = Slf4jFactory.getILoggerFactory().getLogger("ROOT")
 
     # remove the console appender
-    for appender in root.iteratorForAppenders():
-        if appender.getName() == "console":
-            root.detachAppender(appender)
-            break
+    with contextlib.suppress(AttributeError):
+        for appender in root.iteratorForAppenders():
+            if appender.getName() in ("console", "PyAppender"):
+                root.detachAppender(appender)
 
-    # add the Python appender
-    root.addAppender(proxy)
-    _LOGGING_REDIRECTED = True
-
-
-def pixtype2dtype(pixeltype: int, little_endian: bool) -> np.dtype:
-    """Convert a loci.formats PixelType integer into a numpy dtype."""
-    FormatTools = scyjava.jimport("loci.formats.FormatTools")
-
-    fmt2type: dict[int, str] = {
-        FormatTools.INT8: "i1",
-        FormatTools.UINT8: "u1",
-        FormatTools.INT16: "i2",
-        FormatTools.UINT16: "u2",
-        FormatTools.INT32: "i4",
-        FormatTools.UINT32: "u4",
-        FormatTools.FLOAT: "f4",
-        FormatTools.DOUBLE: "f8",
-    }
-    return np.dtype(("<" if little_endian else ">") + fmt2type[pixeltype])
+        # add the Python appender
+        root.addAppender(proxy)
 
 
 @cache
@@ -133,8 +109,16 @@ def hide_memoization_warning() -> None:
     An illegal reflective access operation has occurred
     https://github.com/ome/bioformats/issues/3659
     """
-    with suppress(Exception):
+    with contextlib.suppress(Exception):
         import jpype
 
         System = jpype.JPackage("java").lang.System
         System.err.close()
+
+
+@cache  # run only once
+def start_jvm() -> None:
+    """Start the JVM if not already running."""
+    scyjava.start_jvm()  # won't repeat if already running
+    redirect_java_logging()
+    hide_memoization_warning()

@@ -3,6 +3,8 @@ ci:
   autofix_commit_msg: "style(pre-commit.ci): auto fixes [...]"
   autoupdate_commit_msg: "ci(pre-commit.ci): autoupdate"
 
+exclude: "^typings/"
+
 repos:
   - repo: https://github.com/abravalheri/validate-pyproject
     rev: v0.25
@@ -28,10 +30,11 @@ repos:
 
   - repo: local
     hooks:
-      - id: ty-check
-        name: ty-check
-        language: python
-        entry: ty check
-        pass_filenames: false
-        args: [--python=.venv/]
-        additional_dependencies: [ty]
+      - id: pyright
+        stages: [manual]
+        exclude: "^docs/"
+        name: pyright
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+        entry: uv run pyright

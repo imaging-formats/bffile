@@ -28,8 +28,8 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=2.0.2",
-    "ome-types>=0.6.1",
-    "scyjava>=1.10.2",
+    "ome-types[pint,lxml]>=0.6.1",
+    "scyjava>=1.12",
     "dask[array]>=2024.8.0",
     "resource-backed-dask-array>=0.1.0",
 ]
@@ -47,9 +47,10 @@ dev = [
     "ipython>=8.18.1",
     "pdbpp>=0.11.6 ; sys_platform != 'win32'",
     "prek>=0.2.19",
+    "pyright>=1.1.408",
     "rich>=14.0.0",
     "ruff>=0.11.6",
-    "ty>=0.0.1a29",
+    "types-requests>=2.32.0.20250328",
 ]
 
 # https://docs.astral.sh/ruff
@@ -57,6 +58,7 @@ dev = [
 line-length = 88
 target-version = "py310"
 src = ["src"]
+exclude = ["typings"]
 fix = true
 unsafe-fixes = true
 
@@ -89,11 +91,23 @@ ignore = [
 docstring-code-format = true
 skip-magic-trailing-comma = false # default is false
 
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.10"
+enableExperimentalFeatures = true
+verboseOutput = true
+venv = ".venv"
+reportMissingModuleSource = "none"
+
 # https://docs.pytest.org/
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    "ignore:Failing to pass a value to the 'type_params' parameter",
+    "ignore:Failed to retrieve OME XML:RuntimeWarning",
+]
 
 # https://coverage.readthedocs.io/
 [tool.coverage.report]
