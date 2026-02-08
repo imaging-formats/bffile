@@ -69,7 +69,7 @@ jobs:
         run: uv sync --group test
         env:
           UV_NO_DEV: 1
-          UV_RESOLUTION: ${{ matrix.resolution }}
+          UV_RESOLUTION: ${{ matrix.resolution || 'highest' }}
           UV_PRERELEASE: ${{ github.event_name == 'schedule' && 'allow' || 'if-necessary-or-explicit' }}
 
       - name: Test
