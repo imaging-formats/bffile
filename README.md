@@ -53,9 +53,10 @@ Available vendors: `zulu-jre`, `zulu`, `adoptium`, `temurin`, and
 
 #### Java 8 Support
 
-Bffile is not currently tested with Java 8, there are some known issues with
-casting to numpy.  If you do want to try with Java 8, you will minimally need to
-explicitly pin `jpype<1.6`.
+Bffile is not currently tested with Java 8, as `jpype` has deprecated support
+for Java 8 as of `jpype` version 1.6. If you do want to try with Java 8, you
+will minimally need to explicitly pin `jpype<1.6`.  If this is an important
+use case for you, please open an issue to discuss Java 8 support.
 
 ## License
 
