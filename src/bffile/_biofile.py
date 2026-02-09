@@ -5,9 +5,11 @@ import sys
 import warnings
 import weakref
 from contextlib import suppress
+from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import jpype
 import numpy as np
@@ -20,8 +22,31 @@ from . import _utils
 from ._jimports import jimport
 
 if TYPE_CHECKING:
+    import java.lang
     from loci.formats import IFormatReader
     from resource_backed_dask_array import ResourceBackedDaskArray
+
+
+@dataclass(frozen=True)
+class ReaderInfo:
+    """Information about a Bio-Formats reader class.
+
+    Attributes
+    ----------
+    format : str
+        Human-readable format name (e.g., "Nikon ND2").
+    suffixes : tuple[str, ...]
+        Supported file extensions (e.g., ("nd2", "jp2")).
+    class_name : str
+        Full Java class name (e.g., "ND2Reader").
+    is_gpl : bool
+        Whether this reader requires GPL license (True) or is BSD (False).
+    """
+
+    format: str
+    suffixes: tuple[str, ...]
+    class_name: str
+    is_gpl: bool
 
 
 # by default, .bfmemo files will go into the same directory as the file.
@@ -502,6 +527,71 @@ class BioFile:
         """Get the version of Bio-Formats."""
         Version = jimport("loci.formats.FormatTools")
         return str(getattr(Version, "VERSION", "unknown"))
+
+    @staticmethod
+    def bioformats_maven_coordinate() -> str:
+        """Return the Maven coordinate used to load Bio-Formats.
+
+        This was either provided via the `BIOFORMATS_VERSION` environment variable, or
+        is the default value, in format "groupId:artifactId:version",
+        See <https://mvnrepository.com/artifact/ome> for available versions.
+        """
+        from ._java_stuff import MAVEN_COORDINATE
+
+        return MAVEN_COORDINATE
+
+    @staticmethod
+    @cache
+    def list_supported_suffixes() -> set[str]:
+        """List all file suffixes supported by the available readers."""
+        reader = jimport("loci.formats.ImageReader")()
+        return {str(x) for x in reader.getSuffixes()}
+
+    @staticmethod
+    @cache
+    def list_available_readers() -> list[ReaderInfo]:
+        """List all available Bio-Formats readers.
+
+        Returns
+        -------
+        list[ReaderInfo]
+            Information about each available reader, including:
+
+            - format: human-readable format name (e.g., "Nikon ND2")
+            - suffixes: supported file extensions (e.g., ("nd2", "jp2"))
+            - class_name: full Java class name (e.g., "ND2Reader")
+            - is_gpl: whether this reader requires GPL license (True) or is BSD (False)
+        """
+        ImageReader = jimport("loci.formats.ImageReader")
+        temp_reader = ImageReader()
+        try:
+            formats = []
+            for reader in temp_reader.getReaders():
+                reader_cls = cast("java.lang.Class", reader.getClass())  # type: ignore
+                class_name = str(reader_cls.getName()).removeprefix("loci.formats.in.")
+
+                # Detect license from JAR file name
+                # GPL readers come from formats-gpl-X.X.X.jar
+                # BSD readers come from formats-bsd-X.X.X.jar
+                is_gpl = True
+                with suppress(Exception):
+                    protection_domain = reader_cls.getProtectionDomain()
+                    if (code_source := protection_domain.getCodeSource()) is not None:
+                        location = str(code_source.getLocation())
+                        is_gpl = "formats-gpl-" in location.split("/")[-1]
+
+                formats.append(
+                    ReaderInfo(
+                        format=str(reader.getFormat()),
+                        suffixes=tuple(str(s) for s in reader.getSuffixes()),
+                        class_name=class_name,
+                        is_gpl=is_gpl,
+                    )
+                )
+
+            return formats
+        finally:
+            temp_reader.close()
 
 
 def _close_java_reader(java_reader: IFormatReader | None) -> None:

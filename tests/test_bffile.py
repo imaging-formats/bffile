@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from bffile import BioFile
+from bffile._biofile import ReaderInfo
 from bffile._utils import (
     OMEShape,
     PhysicalPixelSizes,
@@ -29,6 +30,47 @@ def test_bffile(test_file: Path) -> None:
         assert bf.to_numpy() is not None
         assert bf.to_dask() is not None
         assert bf.shape
+
+
+# --------------------- BioFile staticmethod tests ---------------------
+
+
+def test_bioformats_version() -> None:
+    """Test that bioformats_version returns a non-empty string."""
+    version = BioFile.bioformats_version()
+    assert isinstance(version, str)
+    assert len(version) > 0
+    assert version != "unknown"
+
+
+def test_bioformats_maven_coordinate() -> None:
+    """Test that bioformats_maven_coordinate returns expected format."""
+    coord = BioFile.bioformats_maven_coordinate()
+    assert isinstance(coord, str)
+    # Maven coordinate format: groupId:artifactId:version
+    parts = coord.split(":")
+    assert len(parts) >= 3
+
+
+def test_list_supported_suffixes() -> None:
+    """Test that list_supported_suffixes returns a set of file extensions."""
+    suffixes = BioFile.list_supported_suffixes()
+    assert all(isinstance(s, str) for s in suffixes)
+    assert "tif" in suffixes
+
+
+def test_list_available_readers() -> None:
+    """Test that list_available_readers returns ReaderInfo objects."""
+    readers = BioFile.list_available_readers()
+    assert len(readers) > 0
+
+    # Check first reader has expected structure
+    reader = readers[0]
+    assert isinstance(reader, ReaderInfo)
+    assert isinstance(reader.format, str)
+    assert isinstance(reader.suffixes, tuple)
+    assert isinstance(reader.class_name, str)
+    assert isinstance(reader.is_gpl, bool)
 
 
 # --------------------- _utils.py tests ---------------------
