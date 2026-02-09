@@ -2,6 +2,16 @@
 
 This repo wraps the Bio-Formats Java library.
 
+## Testing tips
+
+In general, prefer `--allow-cache` when running tests to speed them up.
+This avoids re-downloading stuff from maven.  You can also use `-n`
+to run in parallel:
+
+```
+uv run pytest --allow-cache -n 6
+```
+
 ## Understanding the underlying Java codebase
 
 When you need to understand the underlying Java implementation details,
