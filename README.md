@@ -26,6 +26,41 @@ with BioFile("tests/data/ND2_dims_p4z5t3c2y32x32.nd2") as bf:
     print(data.shape, data.dtype)
 ```
 
+### Selecting Bio-Formats Version
+
+Bio-Formats is downloaded at runtime (via [jgo](https://pypi.org/project/jgo/)).
+
+By default, it will download the latest `ome:formats-gpl:RELEASE` maven artifact.
+You can specify a different version by setting the `BIOFORMATS_VERSION` environment variable:
+
+This variable accepts either a simple version string (e.g. `6.0.1`) or a full maven coordinate
+(e.g. `ome:formats-gpl:6.0.1` or `ome:formats-bsd:7.3.1`):
+
+```bash
+# Use Bio-Formats 6.0.1 (GPL-licensed)
+export BIOFORMATS_VERSION="6.0.1"
+
+# Use BSD-licensed Bio-Formats 7.3.1
+export BIOFORMATS_VERSION="ome:formats-bsd:7.3.1"
+```
+
+To see the currently installed version of Bio-Formats, you can check the
+`BioFile.bioformats_version` static method:
+
+```python
+from bffile import BioFile
+
+print(BioFile.bioformats_version())  # e.g. "8.1.1"
+```
+
+and to see the full maven coordinate that was used:
+
+```python
+from bffile import BioFile
+
+print(BioFile.bioformats_maven_coordinate())  # e.g. "ome:formats-gpl:8.1.1"
+```
+
 ### Java Runtime
 
 > [!TIP]
@@ -53,10 +88,10 @@ Available vendors: `zulu-jre`, `zulu`, `adoptium`, `temurin`, and
 
 #### Java 8 Support
 
-Bffile is not currently tested with Java 8, as `jpype` has deprecated support
-for Java 8 as of `jpype` version 1.6. If you do want to try with Java 8, you
-will minimally need to explicitly pin `jpype<1.6`.  If this is an important
-use case for you, please open an issue to discuss Java 8 support.
+Bffile is *not* currently expected to work with Java 8, as `jpype` has
+deprecated support for Java 8 as of `jpype` version 1.6. If you do want to try
+with Java 8, you will minimally need to explicitly pin `jpype<1.6`.  If this is
+an important use case for you, please open an issue to discuss Java 8 support.
 
 ## License
 
