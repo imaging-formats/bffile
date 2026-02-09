@@ -61,6 +61,10 @@ from bffile import BioFile
 print(BioFile.bioformats_maven_coordinate())  # e.g. "ome:formats-gpl:8.1.1"
 ```
 
+> [!NOTE]
+> We test back to version 6.0.1, but older versions may also work.  If you specifically need
+> this code to work with an older version of bioformats, please open an issue.
+
 ### Java Runtime
 
 > [!TIP]
