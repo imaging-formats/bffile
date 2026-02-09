@@ -369,13 +369,6 @@ class LazyBioArray:
         if y_stop <= y_start or x_stop <= x_start:
             return
 
-        # Pre-allocate reusable buffer for plane reads
-        # This avoids allocating a new buffer on every iteration
-        plane_shape = (y_stop - y_start, x_stop - x_start)
-        if self.ndim == 6:  # RGB
-            plane_shape = (*plane_shape, self.shape[5])
-        buffer = np.empty(plane_shape, dtype=self.dtype)
-
         # Acquire lock ONCE for entire batch read
         # This is much faster than acquiring/releasing on every plane
         with self._biofile._lock:
@@ -383,14 +376,14 @@ class LazyBioArray:
             if self._series is not None:
                 self._biofile.java_reader().setSeries(self._series)
 
-            # Fast loop - no locking overhead, no allocation overhead!
+            # Fast loop - no locking overhead, minimal copying!
             out_t = 0
             for t in t_range:
                 out_c = 0
                 for c in c_range:
                     out_z = 0
                     for z in z_range:
-                        # Read plane into reusable buffer (unlocked, efficient!)
+                        # Read plane (returns zero-copy view of Java buffer)
                         plane = self._biofile.read_plane(
                             t=t,
                             c=c,
@@ -398,7 +391,6 @@ class LazyBioArray:
                             y=y_slice,
                             x=x_slice,
                             series=None,  # Already set above
-                            buffer=buffer,
                         )
 
                         # Build index tuple based on which dimensions are not squeezed
@@ -410,10 +402,9 @@ class LazyBioArray:
                         if not squeezed[2]:  # Z not squeezed
                             idx.append(out_z)
 
-                        # Assign plane to output
-                        # Note: We need to copy since we're reusing the buffer
+                        # Assign plane to output (single copy: view → output)
                         if idx:
-                            output[tuple(idx)] = plane.copy()
+                            output[tuple(idx)] = plane
                         else:
                             # All T, C, Z squeezed - direct assignment
                             output[:] = plane

@@ -78,7 +78,7 @@ jobs:
           UV_PRERELEASE: ${{ github.event_name == 'schedule' && 'allow' || 'if-necessary-or-explicit' }}
 
       - name: Test
-        run: uv run --no-sync coverage run -p -m pytest -v
+        run: uv run --no-sync coverage run -p -m pytest -p no:faulthandler -v
         env:
           BFF_JAVA_VERSION: ${{ matrix.java-version }}
           BIOFORMATS_VERSION: ${{matrix.bioformats-version}}
