@@ -8,5 +8,6 @@ except PackageNotFoundError:
     __version__ = "uninstalled"
 
 from ._biofile import BioFile
+from ._lazy_array import LazyBioArray
 
-__all__ = ["BioFile"]
+__all__ = ["BioFile", "LazyBioArray"]

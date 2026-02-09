@@ -274,9 +274,6 @@ class BioFile:
         if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
 
-        if series is not None:
-            self._java_reader.setSeries(series)
-
         nt, nc, nz, ny, nx, nrgb = self.core_meta.shape
 
         # Create output array with appropriate shape
@@ -285,14 +282,70 @@ class BioFile:
         else:
             output = np.empty((nt, nc, nz, ny, nx), dtype=self.core_meta.dtype)
 
-        # Fill in each plane
-        for t in range(nt):
-            for c in range(nc):
-                for z in range(nz):
-                    plane = self._get_plane(t, c, z)
-                    output[t, c, z] = plane
+        # Acquire lock once for entire batch read (more efficient than per-plane)
+        with self._lock:
+            if series is not None:
+                self._java_reader.setSeries(series)
+
+            # Fill in each plane
+            for t in range(nt):
+                for c in range(nc):
+                    for z in range(nz):
+                        plane = self.read_plane(t, c, z)
+                        output[t, c, z] = plane
 
         return output
+
+    def as_array(self, series: int | None = None):
+        """
+        Return a lazy numpy-compatible array that reads data on-demand.
+
+        Unlike `to_numpy()` which loads all data into memory immediately,
+        this returns a LazyBioArray that only reads planes or sub-regions
+        when indexed. This enables efficient exploration of large datasets.
+
+        The returned array supports numpy-style indexing and implements the
+        `__array__()` protocol for seamless numpy integration.
+
+        Parameters
+        ----------
+        series : int, optional
+            The series index to retrieve, by default None (uses current series)
+
+        Returns
+        -------
+        LazyBioArray
+            Lazy array that reads from Bio-Formats on-demand
+
+        Examples
+        --------
+        >>> with BioFile("image.nd2") as bf:
+        ...     arr = bf.as_array()  # No data read yet
+        ...     plane = arr[0, 0, 2]  # Reads only this plane
+        ...     roi = arr[0, :, :, 100:200, 50:150]  # Reads sub-regions
+        ...
+        ...     # Convert to numpy when needed
+        ...     full_data = np.array(arr)  # Reads all data
+
+        Notes
+        -----
+        The BioFile instance must remain open while using the lazy array.
+        Multiple LazyBioArray instances can safely coexist, each reading
+        from their own series independently.
+        """
+        if self._java_reader is None:
+            raise RuntimeError("File not open - call open() first")
+
+        # Determine which series to use
+        if series is not None:
+            self._java_reader.setSeries(series)
+            series_index = series
+        else:
+            series_index = self._java_reader.getSeries()
+
+        from bffile._lazy_array import LazyBioArray
+
+        return LazyBioArray(self, series_index)
 
     def to_dask(self, series: int | None = None) -> ResourceBackedDaskArray:
         """Create dask array for the specified or current series.
@@ -387,78 +440,155 @@ class BioFile:
         """Exit context manager - ensures file is closed."""
         self.close()  # Idempotent, so safe to call
 
-    def _get_plane(
+    def read_plane(
         self,
         t: int = 0,
         c: int = 0,
         z: int = 0,
         y: slice | None = None,
         x: slice | None = None,
+        series: int | None = None,
+        buffer: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Load bytes from a single plane.
+        """
+        Read a single plane or sub-region directly from Bio-Formats.
 
-        The file must be open before calling this method.
+        This is the low-level method that directly wraps Bio-Formats' `openBytes()`
+        API. It provides maximum control and efficiency for reading specific planes
+        or rectangular sub-regions.
+
+        **This method is NOT thread-safe.** For multi-threaded access, create
+        separate BioFile instances per thread (recommended) or manage your own
+        locking around calls to this method.
+
+        Most users should use higher-level methods like `to_numpy()`, `to_dask()`,
+        or `as_array()`. Use this method when you need:
+
+        - Fine-grained control over which planes to read
+        - Efficient sub-region reading without loading full planes
+        - Custom caching or streaming strategies
+        - Direct access to Bio-Formats' coordinate system
 
         Parameters
         ----------
         t : int, optional
-            the time index, by default 0
+            Time index (default: 0)
         c : int, optional
-            the channel index, by default 0
+            Channel index (default: 0)
         z : int, optional
-            the z index, by default 0
+            Z-slice index (default: 0)
         y : slice, optional
-            a slice object to select a Y subset of the plane, by default: full axis.
+            Y-axis slice for sub-region reading (default: full height)
+            Example: `slice(100, 200)` reads rows 100-199
         x : slice, optional
-            a slice object to select a X subset of the plane, by default: full axis.
+            X-axis slice for sub-region reading (default: full width)
+            Example: `slice(50, 150)` reads columns 50-149
+        series : int, optional
+            Series index to read from. If not provided, uses current series.
+            Always specify this when working with multi-series files to avoid
+            statefulness issues.
+        buffer : np.ndarray, optional
+            Pre-allocated buffer to read into for efficiency in tight loops.
+            If provided, data is copied into this buffer (reusing it across reads).
+            Buffer must have correct shape and dtype. Used internally for
+            optimization.
 
         Returns
         -------
         np.ndarray
-            array of requested bytes.
+            2D array of shape (height, width) for grayscale images, or
+            3D array of shape (height, width, rgb) for RGB images.
+            The array is a view when possible (zero-copy via memoryview).
 
         Raises
         ------
         RuntimeError
-            If file is not open
+            If file is not open or not properly initialized
+
+        Examples
+        --------
+        Read a specific plane:
+
+        >>> with BioFile("image.nd2") as bf:
+        ...     plane = bf.read_plane(t=0, c=1, z=5)
+        ...     print(plane.shape)
+        (512, 512)
+
+        Read a sub-region (100x100 pixels at position 200,200):
+
+        >>> with BioFile("image.nd2") as bf:
+        ...     roi = bf.read_plane(
+        ...         t=0, c=0, z=0,
+        ...         y=slice(200, 300),
+        ...         x=slice(200, 300)
+        ...     )
+        ...     print(roi.shape)
+        (100, 100)
+
+        Multi-series file (always specify series):
+
+        >>> with BioFile("multi.czi") as bf:
+        ...     plane_s0 = bf.read_plane(t=0, c=0, z=0, series=0)
+        ...     plane_s1 = bf.read_plane(t=0, c=0, z=0, series=1)
+
+        See Also
+        --------
+        to_numpy : Load entire dataset into memory (thread-safe)
+        to_dask : Create a dask array for lazy loading (thread-safe)
+        as_array : Create a numpy-compatible lazy array (thread-safe)
+
+        Notes
+        -----
+        This method does NOT acquire locks internally. The underlying Bio-Formats
+        reader is not thread-safe. For parallel processing, create separate
+        BioFile instances per thread rather than sharing a single instance.
         """
-        with self._lock:
-            # Don't auto-reopen - require explicit open
-            if self.closed:
-                raise RuntimeError(
-                    "Cannot read from closed file. "
-                    "Call open() first or use a context manager: "
-                    "with BioFile(...) as bf:"
-                )
+        # Don't auto-reopen - require explicit open
+        if self.closed:
+            raise RuntimeError(
+                "Cannot read from closed file. "
+                "Call open() first or use a context manager: "
+                "with BioFile(...) as bf:"
+            )
 
-            if self._java_reader is None or self._core_meta_list is None:
-                raise RuntimeError(
-                    "Metadata not initialized - file may not be properly opened"
-                )
+        if self._java_reader is None or self._core_meta_list is None:
+            raise RuntimeError(
+                "Metadata not initialized - file may not be properly opened"
+            )
 
-            shape = self.core_meta.shape
+        # Set series if specified (ensures correct series for lazy arrays)
+        if series is not None:
+            self._java_reader.setSeries(series)
 
-            y = y if y is not None else slice(0, shape.y)
-            x = x if x is not None else slice(0, shape.x)
+        shape = self.core_meta.shape
 
-            # get bytes from bioformats
-            idx = self._java_reader.getIndex(z, c, t)
-            ystart, ywidth = _utils.slice2width(y, shape.y)
-            xstart, xwidth = _utils.slice2width(x, shape.x)
-            # read bytes using bioformats
-            buffer = self._java_reader.openBytes(idx, xstart, ystart, xwidth, ywidth)
-            # convert buffer to numpy array
-            im = np.frombuffer(bytes(buffer), self.core_meta.dtype)
+        y = y if y is not None else slice(0, shape.y)
+        x = x if x is not None else slice(0, shape.x)
 
-            # reshape
-            if shape.rgb > 1:
-                if self.core_meta.is_interleaved:
-                    im.shape = (ywidth, xwidth, shape.rgb)
-                else:
-                    im.shape = (shape.rgb, ywidth, xwidth)
-                    im = np.transpose(im, (1, 2, 0))
+        # Get bytes from bioformats
+        idx = self._java_reader.getIndex(z, c, t)
+        ystart, ywidth = _utils.slice2width(y, shape.y)
+        xstart, xwidth = _utils.slice2width(x, shape.x)
+
+        # Read bytes using bioformats
+        java_buffer = self._java_reader.openBytes(idx, xstart, ystart, xwidth, ywidth)
+        # Convert buffer to numpy array (zero-copy via memoryview)
+        im = np.frombuffer(memoryview(java_buffer), self.core_meta.dtype)
+
+        # Reshape
+        if shape.rgb > 1:
+            if self.core_meta.is_interleaved:
+                im.shape = (ywidth, xwidth, shape.rgb)
             else:
-                im.shape = (ywidth, xwidth)
+                im.shape = (shape.rgb, ywidth, xwidth)
+                im = np.transpose(im, (1, 2, 0))
+        else:
+            im.shape = (ywidth, xwidth)
+
+        # If buffer provided, copy into it (for reuse in loops)
+        if buffer is not None:
+            buffer[:] = im
+            return buffer
 
         return im
 
@@ -477,9 +607,9 @@ class BioFile:
             *_, ny, nx, _ = self.core_meta.shape
             y_slice = _utils.axis_id_to_slice(y, self.tile_size[0], ny)
             x_slice = _utils.axis_id_to_slice(x, self.tile_size[1], nx)
-            im = self._get_plane(t, c, z, y_slice, x_slice)
+            im = self.read_plane(t, c, z, y_slice, x_slice)
         else:
-            im = self._get_plane(t, c, z)
+            im = self.read_plane(t, c, z)
 
         return im[np.newaxis, np.newaxis, np.newaxis]
 
