@@ -23,7 +23,11 @@ jobs:
       - run: uv run pyright
 
   test:
-    name: Test ${{ matrix.os }} py${{ matrix.python-version }} java${{ matrix.java-version }} bf${{ matrix.bioformats-version }} ${{ matrix.resolution == 'highest' && '' || matrix.resolution }}
+    name: >-
+      Test ${{ matrix.os }} py${{ matrix.python-version }}
+        java${{ matrix.java-version }}
+        ${{ matrix.bioformats-version && format('bf{0}', matrix.bioformats-version) || '' }}
+        ${{ matrix.resolution != 'highest' && matrix.resolution || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -78,7 +82,7 @@ jobs:
           UV_PRERELEASE: ${{ github.event_name == 'schedule' && 'allow' || 'if-necessary-or-explicit' }}
 
       - name: Test
-        run: uv run --no-sync coverage run -p -m pytest -v
+        run: uv run --no-sync coverage run -p -m pytest -v -p no:faulthandler
         env:
           BFF_JAVA_VERSION: ${{ matrix.java-version }}
           BIOFORMATS_VERSION: ${{matrix.bioformats-version}}
