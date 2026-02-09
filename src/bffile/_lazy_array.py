@@ -132,8 +132,9 @@ class LazyBioArray:
         copy : bool, optional
             Whether to force a copy (NumPy 2.0+ compatibility)
         """
-        # Read all data via to_numpy, using the correct series
-        result = self._biofile.to_numpy(series=self._series)
+        # Read all data using our optimized __getitem__ implementation
+        # (uses buffer reuse and batched locking)
+        result = self[:]
         if dtype is not None and result.dtype != dtype:
             result = result.astype(dtype)
         # NumPy 2.0+ copy parameter - data is always fresh from disk so no copy needed
@@ -372,7 +373,7 @@ class LazyBioArray:
         # This avoids allocating a new buffer on every iteration
         plane_shape = (y_stop - y_start, x_stop - x_start)
         if self.ndim == 6:  # RGB
-            plane_shape = plane_shape + (self.shape[5],)
+            plane_shape = (*plane_shape, self.shape[5])
         buffer = np.empty(plane_shape, dtype=self.dtype)
 
         # Acquire lock ONCE for entire batch read
@@ -380,7 +381,7 @@ class LazyBioArray:
         with self._biofile._lock:
             # Set series once at start (not on every iteration)
             if self._series is not None:
-                self._biofile._java_reader.setSeries(self._series)
+                self._biofile.java_reader().setSeries(self._series)
 
             # Fast loop - no locking overhead, no allocation overhead!
             out_t = 0

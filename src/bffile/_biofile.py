@@ -259,43 +259,6 @@ class BioFile:
             self._java_reader = None
             self._core_meta_list = None
 
-    def to_numpy(self, series: int | None = None) -> np.ndarray:
-        """Create numpy array for the specified or current series.
-
-        Note: the order of the returned array will *always* be `TCZYX[r]`,
-        where `[r]` refers to an optional RGB dimension with size 3 or 4.
-        If the image is RGB it will have `ndim==6`, otherwise `ndim` will be 5.
-
-        Parameters
-        ----------
-        series : int, optional
-            The series index to retrieve, by default None
-        """
-        if self._java_reader is None:
-            raise RuntimeError("File not open - call open() first")
-
-        nt, nc, nz, ny, nx, nrgb = self.core_meta.shape
-
-        # Create output array with appropriate shape
-        if nrgb > 1:
-            output = np.empty((nt, nc, nz, ny, nx, nrgb), dtype=self.core_meta.dtype)
-        else:
-            output = np.empty((nt, nc, nz, ny, nx), dtype=self.core_meta.dtype)
-
-        # Acquire lock once for entire batch read (more efficient than per-plane)
-        with self._lock:
-            if series is not None:
-                self._java_reader.setSeries(series)
-
-            # Fill in each plane
-            for t in range(nt):
-                for c in range(nc):
-                    for z in range(nz):
-                        plane = self.read_plane(t, c, z)
-                        output[t, c, z] = plane
-
-        return output
-
     def as_array(self, series: int | None = None):
         """
         Return a lazy numpy-compatible array that reads data on-demand.
@@ -347,21 +310,47 @@ class BioFile:
 
         return LazyBioArray(self, series_index)
 
-    def to_dask(self, series: int | None = None) -> ResourceBackedDaskArray:
+    def to_dask(
+        self, series: int | None = None, chunks: str | tuple = "auto"
+    ) -> ResourceBackedDaskArray:
         """Create dask array for the specified or current series.
+
+        This method wraps the LazyBioArray in a dask array, enabling lazy
+        computation workflows. The dask array uses single-threaded execution
+        by default (required for Bio-Formats thread safety).
 
         Note: the order of the returned array will *always* be `TCZYX[r]`,
         where `[r]` refers to an optional RGB dimension with size 3 or 4.
         If the image is RGB it will have `ndim==6`, otherwise `ndim` will be 5.
 
-        The returned object is a `ResourceBackedDaskArray`, which is a wrapper on
-        a dask array that ensures the file is open when actually reading (computing)
-        a chunk.  It has all the methods and behavior of a dask array.
+        The returned object is a `ResourceBackedDaskArray`, which ensures the
+        file is open when computing chunks.
         See: https://github.com/tlambert03/resource-backed-dask-array
+
+        Parameters
+        ----------
+        series : int, optional
+            Series index to read from
+        chunks : str or tuple, default "auto"
+            Chunk specification for dask array. Common values:
+            - "auto": Let dask decide (default)
+            - (1, 1, 1, -1, -1): Each T, C, Z separate, full Y, X planes
+            - (1, 1, 1, 512, 512): Tile into 512x512 chunks
 
         Returns
         -------
         ResourceBackedDaskArray
+
+        Examples
+        --------
+        >>> bf = BioFile("image.nd2")
+        >>> darr = bf.to_dask(chunks=(1, 1, 1, -1, -1))
+        >>> # Lazy computation - nothing executes yet
+        >>> result = darr.mean(axis=(1, 2))
+        >>> # Execute with single-threaded scheduler (required for Bio-Formats)
+        >>> import dask
+        >>> with dask.config.set(scheduler="synchronous"):
+        ...     computed = result.compute()
         """
         try:
             import dask.array as da
@@ -375,25 +364,19 @@ class BioFile:
         if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
 
-        if series is not None:
-            self._java_reader.setSeries(series)
+        # Get lazy array (handles series internally)
+        lazy_arr = self.as_array(series=series)
 
-        nt, nc, nz, ny, nx, nrgb = self.core_meta.shape
-
-        if self.dask_tiles:
+        # Handle legacy dask_tiles behavior
+        if chunks == "auto" and self.dask_tiles:
+            nt, nc, nz, ny, nx, nrgb = self.core_meta.shape
             chunks = _utils.get_dask_tile_chunks(nt, nc, nz, ny, nx, self.tile_size)
-        else:
-            chunks = ((1,) * nt, (1,) * nc, (1,) * nz, (ny,), (nx,))
+            if nrgb > 1:
+                chunks = (*chunks, nrgb)  # type: ignore[assignment]
 
-        if nrgb > 1:
-            chunks = (*chunks, nrgb)  # type: ignore[assignment]
-
-        arr = da.map_blocks(
-            self._dask_chunk,
-            chunks=chunks,
-            dtype=self.core_meta.dtype,
-        )
-        return resource_backed_dask_array(arr, self)
+        # Wrap lazy array in dask
+        darr = da.from_array(lazy_arr, chunks=chunks)  # type: ignore
+        return resource_backed_dask_array(darr, self)
 
     @property
     def closed(self) -> bool:
@@ -517,11 +500,7 @@ class BioFile:
         Read a sub-region (100x100 pixels at position 200,200):
 
         >>> with BioFile("image.nd2") as bf:
-        ...     roi = bf.read_plane(
-        ...         t=0, c=0, z=0,
-        ...         y=slice(200, 300),
-        ...         x=slice(200, 300)
-        ...     )
+        ...     roi = bf.read_plane(t=0, c=0, z=0, y=slice(200, 300), x=slice(200, 300))
         ...     print(roi.shape)
         (100, 100)
 
@@ -573,7 +552,7 @@ class BioFile:
         # Read bytes using bioformats
         java_buffer = self._java_reader.openBytes(idx, xstart, ystart, xwidth, ywidth)
         # Convert buffer to numpy array (zero-copy via memoryview)
-        im = np.frombuffer(memoryview(java_buffer), self.core_meta.dtype)
+        im = np.frombuffer(memoryview(java_buffer), self.core_meta.dtype)  # type: ignore
 
         # Reshape
         if shape.rgb > 1:
@@ -591,27 +570,6 @@ class BioFile:
             return buffer
 
         return im
-
-    def _dask_chunk(self, block_id: tuple[int, ...]) -> np.ndarray:
-        """Retrieve `block_id` from array.
-
-        This function is for map_blocks (called in `to_dask`).
-        If someone indexes a 5D dask array as `arr[0, 1, 2]`, then 'block_id'
-        will be (0, 1, 2, 0, 0)
-        """
-        # Our convention is that the final dask array is in the order TCZYX, so
-        # block_id will be coming in as (T, C, Z, Y, X).
-        t, c, z, y, x, *_ = block_id
-
-        if self.dask_tiles:
-            *_, ny, nx, _ = self.core_meta.shape
-            y_slice = _utils.axis_id_to_slice(y, self.tile_size[0], ny)
-            x_slice = _utils.axis_id_to_slice(x, self.tile_size[1], nx)
-            im = self.read_plane(t, c, z, y_slice, x_slice)
-        else:
-            im = self.read_plane(t, c, z)
-
-        return im[np.newaxis, np.newaxis, np.newaxis]
 
     _service: ClassVar[Any] = None
 

@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 def test_bffile(test_file: Path) -> None:
     with BioFile(test_file) as bf:
-        assert bf.to_numpy() is not None
+        assert np.asarray(bf.as_array()) is not None
         assert bf.to_dask() is not None
         assert bf.shape
 
@@ -140,7 +140,7 @@ def test_biofile_memoize(test_file: Path, tmp_path: Path) -> None:
     try:
         biofile_mod.BIOFORMATS_MEMO_DIR = tmp_path
         with BioFile(test_file, memoize=1) as bf:
-            assert bf.to_numpy() is not None
+            assert np.asarray(bf.as_array()) is not None
     finally:
         biofile_mod.BIOFORMATS_MEMO_DIR = old_memo_dir
 
