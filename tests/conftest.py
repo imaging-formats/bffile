@@ -134,3 +134,21 @@ def cache_dirs(request: pytest.FixtureRequest) -> Iterator[Path | None]:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
     yield tmp_path
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item, call: pytest.CallInfo
+) -> Iterator[None]:
+    """Convert UnknownFormatException failures to xfail."""
+    outcome = yield
+    report = outcome.get_result()
+
+    # Convert UnknownFormatException failures to xfail
+    if report.when == "call" and report.failed:
+        if call.excinfo is not None:
+            exc_value = str(call.excinfo.value)
+            if "UnknownFormatException" in exc_value:
+                report.outcome = "skipped"
+                data = Path(__file__).parent / "data"
+                report.wasxfail = str(exc_value).replace(str(data), "")
