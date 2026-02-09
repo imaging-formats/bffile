@@ -354,10 +354,9 @@ class BioFile:
         """
         try:
             import dask.array as da
-            from resource_backed_dask_array import resource_backed_dask_array
         except ImportError as e:
             raise ImportError(
-                "Dask and resource-backed-dask-array are required for to_dask(). "
+                "Dask is required for to_dask(). "
                 "Please install with `pip install bffile[dask]`"
             ) from e
 
@@ -374,9 +373,7 @@ class BioFile:
             if nrgb > 1:
                 chunks = (*chunks, nrgb)  # type: ignore[assignment]
 
-        # Wrap lazy array in dask
-        darr = da.from_array(lazy_arr, chunks=chunks)  # type: ignore
-        return resource_backed_dask_array(darr, self)
+        return da.from_array(lazy_arr, chunks=chunks)  # type: ignore
 
     @property
     def closed(self) -> bool:
