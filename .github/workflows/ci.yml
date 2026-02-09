@@ -103,7 +103,6 @@ jobs:
 
   build-and-inspect-package:
     name: Build & inspect package.
-    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -113,7 +112,7 @@ jobs:
 
   upload-to-pypi:
     name: Upload package to PyPI
-    needs: build-and-inspect-package
+    needs: [test, build-and-inspect-package]
     if: success() && startsWith(github.ref, 'refs/tags/') && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
