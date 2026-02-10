@@ -16,7 +16,7 @@ import numpy as np
 from ome_types import OME
 from typing_extensions import Self
 
-from bffile._core_metadata import CoreMetadata, OMEShape
+from bffile._core_metadata import CoreMetadata
 
 from . import _utils
 from ._jimports import jimport
@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     import java.lang
     from loci.formats import IFormatReader
     from resource_backed_dask_array import ResourceBackedDaskArray
+
+    from bffile._lazy_array import LazyBioArray
 
 
 @dataclass(frozen=True)
@@ -74,42 +76,39 @@ class BioFile:
     Parameters
     ----------
     path : str or Path
-        path to file
-    series : int, optional
-        the image series to read, by default 0
+        Path to file
     meta : bool, optional
-        whether to get metadata as well, by default True
+        Whether to get metadata as well, by default True
     original_meta : bool, optional
-        whether to also retrieve the proprietary metadata as structured annotations in
+        Whether to also retrieve the proprietary metadata as structured annotations in
         the OME output, by default False
     memoize : bool or int, optional
-        threshold (in milliseconds) for memoizing the reader. If the the time
+        Threshold (in milliseconds) for memoizing the reader. If the time
         required to call `reader.setId()` is larger than this number, the initialized
         reader (including all reader wrappers) will be cached in a memo file, reducing
-        time to load the file on future reads.  By default, this results in a hidden
+        time to load the file on future reads. By default, this results in a hidden
         `.bfmemo` file in the same directory as the file. The `BIOFORMATS_MEMO_DIR`
         environment can be used to change the memo file directory.
-        Set `memoize` to greater than 0 to turn on memoization. by default it's off.
+        Set `memoize` to greater than 0 to turn on memoization, by default it's off.
         https://downloads.openmicroscopy.org/bio-formats/latest/api/loci/formats/Memoizer.html
-    options : Dict[str, bool], optional
+    options : dict[str, bool], optional
         A mapping of option-name -> bool specifying additional reader-specific options.
-        see: https://docs.openmicroscopy.org/bio-formats/latest/formats/options.html
+        See: https://docs.openmicroscopy.org/bio-formats/latest/formats/options.html
         For example: to turn off chunkmap table reading for ND2 files, use
         `options={"nativend2.chunkmap": False}`
-    dask_tiles: bool, optional
+    dask_tiles : bool, optional
         Whether to chunk the bioformats dask array by tiles to easily read sub-regions
-        with numpy-like array indexing
-        Defaults to false and images are read by entire planes
-    tile_size: Optional[Tuple[int, int]]
-        Tuple that sets the tile size of y and x axis, respectively
-        By default, it will use optimal values computed by bioformats itself
+        with numpy-like array indexing. Defaults to False (images are read by entire
+        planes).
+    tile_size : tuple[int, int], optional
+        Tuple that sets the tile size of y and x axis, respectively.
+        By default, it will use optimal values computed by bioformats itself.
     """
 
     def __init__(
         self,
         path: str | os.PathLike,
         *,
-        series: int = 0,
         meta: bool = True,
         original_meta: bool = False,
         memoize: int | bool = 0,
@@ -118,7 +117,6 @@ class BioFile:
         tile_size: tuple[int, int] | None = None,
     ):
         self._path = str(Path(path).expanduser().absolute())
-        self._current_scene_index = series
         self._lock = RLock()
         self.dask_tiles = dask_tiles
 
@@ -137,27 +135,9 @@ class BioFile:
 
         # Reader and finalizer created in open()
         self._java_reader: IFormatReader | None = None
-        self._core_meta_list: list[CoreMetadata] | None = None
+        # 2D structure: list[series][resolution]
+        self._core_meta_list: list[list[CoreMetadata]] | None = None
         self._finalizer: weakref.finalize | None = None
-
-    def set_series(self, series: int = 0) -> None:
-        """Set the current image series.
-
-        Parameters
-        ----------
-        series : int
-            Series index to select
-
-        Raises
-        ------
-        RuntimeError
-            If file is not open
-        """
-        with self._lock:
-            if self.closed:
-                raise RuntimeError("Cannot set series on closed file")
-            self.java_reader().setSeries(series)
-            self._current_scene_index = series
 
     def java_reader(self) -> IFormatReader:
         """Return the native reader object.
@@ -173,26 +153,82 @@ class BioFile:
             raise RuntimeError("Internal error: reader not initialized")
         return self._java_reader
 
-    @property
-    def core_meta(self) -> CoreMetadata:
-        """Get metadata for current series.
+    @staticmethod
+    def _parse_core_metadata(
+        flat_list: list[CoreMetadata],
+    ) -> list[list[CoreMetadata]]:
+        """Parse flat CoreMetadata list into 2D structure.
+
+        Bio-Formats returns metadata as a flat list where entries are organized
+        as: [series0_res0, series0_res1, ..., series1_res0, series1_res1, ...].
+        The first entry of each series has resolution_count set to indicate how
+        many resolution levels that series has.
+
+        Parameters
+        ----------
+        flat_list : list[CoreMetadata]
+            Flat list from Bio-Formats getCoreMetadataList()
+
+        Returns
+        -------
+        list[list[CoreMetadata]]
+            2D structure: outer list = series, inner list = resolutions
+        """
+        result: list[list[CoreMetadata]] = []
+        i = 0
+        while i < len(flat_list):
+            # First entry of each series has resolution_count
+            resolution_count = flat_list[i].resolution_count
+            if resolution_count <= 0:
+                # Fallback: assume 1 resolution if not set
+                resolution_count = 1
+            # Extract this series' resolutions
+            series_resolutions = flat_list[i : i + resolution_count]
+            result.append(series_resolutions)
+            i += resolution_count
+        return result
+
+    def core_meta(self, series: int = 0, resolution: int = 0) -> CoreMetadata:
+        """Get metadata for specified series and resolution.
+
+        Parameters
+        ----------
+        series : int, optional
+            Series index, by default 0
+        resolution : int, optional
+            Resolution level (0 = full resolution), by default 0
+
+        Returns
+        -------
+        CoreMetadata
+            Metadata for the specified series and resolution
 
         Raises
         ------
         RuntimeError
             If file is not open
+        IndexError
+            If series or resolution index is out of bounds
+
+        Notes
+        -----
+        Resolution support is included for future compatibility, but currently
+        only resolution 0 (full resolution) is exposed in the public API.
         """
         if self._core_meta_list is None:
             raise RuntimeError("File not open - call open() first")
-        return self._core_meta_list[self._current_scene_index]
-
-    @property
-    def shape(self) -> OMEShape:
-        return self.core_meta.shape
-
-    @property
-    def dtype(self) -> np.dtype:
-        return self.core_meta.dtype
+        if series < 0 or series >= len(self._core_meta_list):
+            raise IndexError(
+                f"Series index {series} out of range "
+                f"(file has {len(self._core_meta_list)} series)"
+            )
+        if resolution < 0 or resolution >= len(self._core_meta_list[series]):
+            raise IndexError(
+                f"Resolution index {resolution} out of range "
+                f"(series {series} has {len(self._core_meta_list[series])} "
+                f"resolution levels)"
+            )
+        return self._core_meta_list[series][resolution]
 
     def open(self) -> None:
         """Open file and initialize reader.
@@ -207,6 +243,11 @@ class BioFile:
 
             # Create reader
             self._java_reader = jimport("loci.formats.ImageReader")()
+
+            # Use non-flattened resolution mode for cleaner API
+            # This allows us to use setSeries(s) + setResolution(r) instead of
+            # treating each resolution as a separate series
+            self._java_reader.setFlattenedResolutions(False)
 
             # Wrap with Memoizer if requested
             # Note: Memoizer MUST wrap before setMetadataStore
@@ -238,16 +279,14 @@ class BioFile:
             try:
                 self._java_reader.setId(self._path)
 
-                # Cache metadata
-                self._core_meta_list = [
+                # Cache metadata in 2D structure: list[series][resolution]
+                # Bio-Formats returns a flat list where the first entry of each
+                # series has resolutionCount set. We parse this into 2D.
+                flat_list = [
                     CoreMetadata.from_java(x)
                     for x in self._java_reader.getCoreMetadataList()
                 ]
-
-                # Set the series specified in __init__
-                # Note: set_series() acquires lock, but we already have it
-                # So we call the Java method directly here
-                self._java_reader.setSeries(self._current_scene_index)
+                self._core_meta_list = self._parse_core_metadata(flat_list)
 
                 # Setup tile size if needed
                 if self.dask_tiles:
@@ -284,21 +323,20 @@ class BioFile:
             self._java_reader = None
             self._core_meta_list = None
 
-    def as_array(self, series: int | None = None):
-        """
-        Return a lazy numpy-compatible array that reads data on-demand.
-
-        Unlike `to_numpy()` which loads all data into memory immediately,
-        this returns a LazyBioArray that only reads planes or sub-regions
-        when indexed. This enables efficient exploration of large datasets.
+    def as_array(self, series: int = 0, resolution: int = 0) -> LazyBioArray:
+        """Return a lazy numpy-compatible array that reads data on-demand.
 
         The returned array supports numpy-style indexing and implements the
-        `__array__()` protocol for seamless numpy integration.
+        `__array__()` protocol for seamless numpy integration. To cast it to a numpy
+        array (which materializes *all* data for the given series), use `np.array()` on
+        it.
 
         Parameters
         ----------
         series : int, optional
-            The series index to retrieve, by default None (uses current series)
+            The series index to retrieve, by default 0
+        resolution : int, optional
+            Resolution level (0 = full resolution), by default 0
 
         Returns
         -------
@@ -308,37 +346,35 @@ class BioFile:
         Examples
         --------
         >>> with BioFile("image.nd2") as bf:
-        ...     arr = bf.as_array()  # No data read yet
+        ...     arr = bf.as_array(series=0)  # No data read yet
         ...     plane = arr[0, 0, 2]  # Reads only this plane
-        ...     roi = arr[0, :, :, 100:200, 50:150]  # Reads sub-regions
+        ...     roi = arr[0, 0, :, 100:200, 50:150]  # Reads sub-XY-regions across all Z
         ...
         ...     # Convert to numpy when needed
         ...     full_data = np.array(arr)  # Reads all data
 
         Notes
         -----
-        The BioFile instance must remain open while using the lazy array.
-        Multiple LazyBioArray instances can safely coexist, each reading
-        from their own series independently.
+        - The BioFile instance must remain open while using the lazy array
+        - Multiple LazyBioArray instances can safely coexist, each reading
+          from their own series independently
+        - Resolution parameter is included for future compatibility but currently
+          only resolution 0 is fully supported
         """
         if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
 
-        # Determine which series to use
-        if series is not None:
-            self._java_reader.setSeries(series)
-            series_index = series
-        else:
-            series_index = self._java_reader.getSeries()
-
         from bffile._lazy_array import LazyBioArray
 
-        return LazyBioArray(self, series_index)
+        return LazyBioArray(self, series, resolution)
 
     def to_dask(
-        self, series: int | None = None, chunks: str | tuple = "auto"
+        self,
+        series: int = 0,
+        resolution: int = 0,
+        chunks: str | tuple = "auto",
     ) -> ResourceBackedDaskArray:
-        """Create dask array for the specified or current series.
+        """Create dask array for the specified series and resolution.
 
         This method wraps the LazyBioArray in a dask array, enabling lazy
         computation workflows. The dask array uses single-threaded execution
@@ -355,7 +391,9 @@ class BioFile:
         Parameters
         ----------
         series : int, optional
-            Series index to read from
+            Series index to read from, by default 0
+        resolution : int, optional
+            Resolution level (0 = full resolution), by default 0
         chunks : str or tuple, default "auto"
             Chunk specification for dask array. Common values:
             - "auto": Let dask decide (default)
@@ -369,7 +407,7 @@ class BioFile:
         Examples
         --------
         >>> bf = BioFile("image.nd2")
-        >>> darr = bf.to_dask(chunks=(1, 1, 1, -1, -1))
+        >>> darr = bf.to_dask(series=0, chunks=(1, 1, 1, -1, -1))
         >>> # Lazy computation - nothing executes yet
         >>> result = darr.mean(axis=(1, 2))
         >>> # Execute with single-threaded scheduler (required for Bio-Formats)
@@ -388,12 +426,13 @@ class BioFile:
         if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
 
-        # Get lazy array (handles series internally)
-        lazy_arr = self.as_array(series=series)
+        # Get lazy array
+        lazy_arr = self.as_array(series=series, resolution=resolution)
 
         # Handle legacy dask_tiles behavior
         if chunks == "auto" and self.dask_tiles:
-            nt, nc, nz, ny, nx, nrgb = self.core_meta.shape
+            meta = self.core_meta(series, resolution)
+            nt, nc, nz, ny, nx, nrgb = meta.shape
             chunks = _utils.get_dask_tile_chunks(nt, nc, nz, ny, nx, self.tile_size)
             if nrgb > 1:
                 chunks = (*chunks, nrgb)  # type: ignore[assignment]
@@ -452,7 +491,8 @@ class BioFile:
         z: int = 0,
         y: slice | None = None,
         x: slice | None = None,
-        series: int | None = None,
+        series: int = 0,
+        resolution: int = 0,
         buffer: np.ndarray | None = None,
     ) -> np.ndarray:
         """
@@ -489,9 +529,9 @@ class BioFile:
             X-axis slice for sub-region reading (default: full width)
             Example: `slice(50, 150)` reads columns 50-149
         series : int, optional
-            Series index to read from. If not provided, uses current series.
-            Always specify this when working with multi-series files to avoid
-            statefulness issues.
+            Series index to read from, by default 0
+        resolution : int, optional
+            Resolution level (0 = full resolution), by default 0
         buffer : np.ndarray, optional
             Pre-allocated buffer to read into for efficiency in tight loops.
             If provided, data is copied into this buffer (reusing it across reads).
@@ -544,7 +584,6 @@ class BioFile:
         reader is not thread-safe. For parallel processing, create separate
         BioFile instances per thread rather than sharing a single instance.
         """
-        # Don't auto-reopen - require explicit open
         if self.closed:
             raise RuntimeError(
                 "Cannot read from closed file. "
@@ -557,11 +596,13 @@ class BioFile:
                 "Metadata not initialized - file may not be properly opened"
             )
 
-        # Set series if specified (ensures correct series for lazy arrays)
-        if series is not None:
-            self._java_reader.setSeries(series)
+        # Set series and resolution on Java reader
+        self._java_reader.setSeries(series)
+        self._java_reader.setResolution(resolution)
 
-        shape = self.core_meta.shape
+        # Get metadata for this series/resolution
+        meta = self.core_meta(series, resolution)
+        shape = meta.shape
 
         y = y if y is not None else slice(0, shape.y)
         x = x if x is not None else slice(0, shape.x)
@@ -574,11 +615,11 @@ class BioFile:
         # Read bytes using bioformats
         java_buffer = self._java_reader.openBytes(idx, xstart, ystart, xwidth, ywidth)
         # Convert buffer to numpy array (zero-copy via memoryview)
-        im = np.frombuffer(memoryview(java_buffer), self.core_meta.dtype)  # type: ignore
+        im = np.frombuffer(memoryview(java_buffer), meta.dtype)  # type: ignore
 
         # Reshape
         if shape.rgb > 1:
-            if self.core_meta.is_interleaved:
+            if meta.is_interleaved:
                 im.shape = (ywidth, xwidth, shape.rgb)
             else:
                 im.shape = (shape.rgb, ywidth, xwidth)

@@ -17,9 +17,9 @@ def test_lazy_array_basic_properties(test_file):
         # Check type
         assert isinstance(arr, LazyBioArray)
 
-        # Check properties match numpy array (not bf.shape which includes RGB=1)
+        # Check properties match numpy array
         assert arr.shape == numpy_data.shape
-        assert arr.dtype == bf.core_meta.dtype
+        assert arr.dtype == bf.core_meta(series=0).dtype
         assert arr.ndim == numpy_data.ndim
 
 
@@ -42,7 +42,8 @@ def test_lazy_array_slice_dimensions(test_file):
     with BioFile(test_file) as bf:
         arr = bf.as_array()
         numpy_data = np.asarray(bf.as_array())
-        nt, nc, nz, _ny, _nx = bf.shape[:5]
+        meta = bf.core_meta(series=0)
+        nt, nc, nz, _ny, _nx = meta.shape[:5]
 
         # Only test if we have multiple planes
         if nt > 1:
@@ -69,7 +70,8 @@ def test_lazy_array_subregion_yx(test_file):
     with BioFile(test_file) as bf:
         arr = bf.as_array()
         numpy_data = np.asarray(bf.as_array())
-        ny, nx = bf.shape[3:5]
+        meta = bf.core_meta(series=0)
+        ny, nx = meta.shape.y, meta.shape.x
 
         # Only test if image is large enough
         if ny >= 100 and nx >= 100:
@@ -106,7 +108,8 @@ def test_lazy_array_mixed_indexing(test_file):
     with BioFile(test_file) as bf:
         arr = bf.as_array()
         numpy_data = np.asarray(bf.as_array())
-        nc, nz, ny, nx = bf.shape[1:5]
+        meta = bf.core_meta(series=0)
+        nc, nz, ny, nx = meta.shape.c, meta.shape.z, meta.shape.y, meta.shape.x
 
         # Only test if dimensions allow
         if nc > 1 and nz > 1 and ny > 20 and nx > 30:
@@ -121,7 +124,8 @@ def test_lazy_array_ellipsis(test_file):
     with BioFile(test_file) as bf:
         arr = bf.as_array()
         numpy_data = np.asarray(bf.as_array())
-        ny, nx = bf.shape[3:5]
+        meta = bf.core_meta(series=0)
+        ny, nx = meta.shape.y, meta.shape.x
 
         # Ellipsis expands to fill dimensions
         # Note: indices after ellipsis map to LAST dimensions
@@ -201,7 +205,8 @@ def test_lazy_array_negative_indices(test_file):
     with BioFile(test_file) as bf:
         arr = bf.as_array()
         numpy_data = np.asarray(bf.as_array())
-        nt = bf.shape[0]
+        meta = bf.core_meta(series=0)
+        nt = meta.shape.t
 
         if nt > 1:
             # Negative index for last plane
@@ -268,7 +273,8 @@ def test_lazy_array_memory_efficiency(test_file):
     """
     with BioFile(test_file) as bf:
         arr = bf.as_array()
-        ny, nx = bf.shape[3:5]
+        meta = bf.core_meta(series=0)
+        ny, nx = meta.shape.y, meta.shape.x
 
         # Read small region
         y_size = min(10, ny)

@@ -11,8 +11,7 @@ if TYPE_CHECKING:
 
 
 class LazyBioArray:
-    """
-    Numpy-compatible lazy array that reads data on-demand from Bio-Formats.
+    """Numpy-compatible lazy array that reads data on-demand from Bio-Formats.
 
     Unlike `BioFile.to_numpy()` which loads all data into memory immediately,
     this class returns a lazy array that only reads planes or sub-regions when
@@ -66,7 +65,7 @@ class LazyBioArray:
     - Thread safety: Use the same constraints as BioFile (one instance per thread)
     """
 
-    def __init__(self, biofile: BioFile, series: int) -> None:
+    def __init__(self, biofile: BioFile, series: int, resolution: int = 0) -> None:
         """
         Initialize lazy array wrapper.
 
@@ -76,19 +75,26 @@ class LazyBioArray:
             Open BioFile instance to read from
         series : int
             Series index this array represents
+        resolution : int, optional
+            Resolution level (0 = full resolution), by default 0
         """
         self._biofile = biofile
-        self._series = series  # Store which series this array represents
+        self._series = series
+        self._resolution = resolution
+
+        # Get metadata directly from the 2D list (stateless!)
+        # This avoids hidden dependency on biofile's current state
+        meta = biofile.core_meta(series, resolution)
 
         # Follow same logic as to_numpy(): only include RGB dimension if > 1
-        full_shape = biofile.shape
+        full_shape = meta.shape
         nt, nc, nz, ny, nx = full_shape[:5]
         nrgb = full_shape[5] if len(full_shape) == 6 else 1
         if nrgb > 1:
             self._shape = (nt, nc, nz, ny, nx, nrgb)
         else:
             self._shape = (nt, nc, nz, ny, nx)
-        self._dtype = biofile.core_meta.dtype
+        self._dtype = meta.dtype
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -372,9 +378,9 @@ class LazyBioArray:
         # Acquire lock ONCE for entire batch read
         # This is much faster than acquiring/releasing on every plane
         with self._biofile._lock:
-            # Set series once at start (not on every iteration)
-            if self._series is not None:
-                self._biofile.java_reader().setSeries(self._series)
+            # Set series and resolution once at start (not on every iteration)
+            self._biofile.java_reader().setSeries(self._series)
+            self._biofile.java_reader().setResolution(self._resolution)
 
             # Fast loop - no locking overhead, minimal copying!
             out_t = 0
@@ -384,13 +390,17 @@ class LazyBioArray:
                     out_z = 0
                     for z in z_range:
                         # Read plane (returns zero-copy view of Java buffer)
+                        # Note: we pass series/resolution even though already set,
+                        # because read_plane will call setSeries/setResolution again.
+                        # This is safe (idempotent) and keeps the API explicit.
                         plane = self._biofile.read_plane(
                             t=t,
                             c=c,
                             z=z,
                             y=y_slice,
                             x=x_slice,
-                            series=None,  # Already set above
+                            series=self._series,
+                            resolution=self._resolution,
                         )
 
                         # Build index tuple based on which dimensions are not squeezed
