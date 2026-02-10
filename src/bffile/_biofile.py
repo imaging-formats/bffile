@@ -140,7 +140,6 @@ class BioFile:
         The first entry of each series has resolution_count set to indicate how
         many resolution levels that series has.
         """
-
         # Cache metadata in 2D structure: list[series][resolution]
         # Bio-Formats returns a flat list where the first entry of each
         # series has resolutionCount set. We parse this into 2D.
@@ -149,9 +148,7 @@ class BioFile:
         result: list[list[CoreMetadata]] = []
         i = 0
         while i < len(flat_list):
-            # First entry of each series has resolution_count
             resolution_count = flat_list[i].resolution_count
-            # Extract this series' resolutions
             result.append(flat_list[i : i + resolution_count])
             i += resolution_count
         return result
