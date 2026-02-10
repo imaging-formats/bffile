@@ -234,4 +234,7 @@ def pytest_runtest_makereport(
                 or "Array size too large" in exc_value
             ):
                 report.outcome = "skipped"
-                report.wasxfail = "Pyramid file exceeds Bio-Formats 2GB limit (expected for full resolution)"
+                report.wasxfail = (
+                    "Pyramid file exceeds Bio-Formats 2GB limit "
+                    "(expected for full resolution)"
+                )

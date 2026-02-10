@@ -130,13 +130,13 @@ def test_list_supported_suffixes() -> None:
 
 def test_tile_size_validation() -> None:
     with pytest.raises(ValueError, match="must be length 2"):
-        BioFile("dummy.tif", tile_size=(512,))
+        BioFile("dummy.tif", tile_size=(512,))  # type: ignore
 
     with pytest.raises(ValueError, match="must be length 2"):
-        BioFile("dummy.tif", tile_size=(512, 512, 512))
+        BioFile("dummy.tif", tile_size=(512, 512, 512))  # type: ignore
 
     with pytest.raises(ValueError, match="must be integers"):
-        BioFile("dummy.tif", tile_size=(512.5, 512))
+        BioFile("dummy.tif", tile_size=(512.5, 512))  # type: ignore
 
 
 def test_bioformats_maven_coordinate() -> None:

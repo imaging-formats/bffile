@@ -42,7 +42,6 @@ def test_to_dask_import_error(
 ) -> None:
     import sys
 
-
     monkeypatch.setitem(sys.modules, "dask.array", None)
     with BioFile(simple_file) as bf:
         with pytest.raises(ImportError, match="Dask is required"):
