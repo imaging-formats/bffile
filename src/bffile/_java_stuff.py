@@ -10,6 +10,7 @@ from typing import Any
 import jpype
 import scyjava
 import scyjava.config
+from jpype.types import JString
 
 MAVEN_COORDINATE = "ome:formats-gpl:RELEASE"
 
@@ -126,3 +127,18 @@ def start_jvm() -> None:
     scyjava.start_jvm()  # won't repeat if already running
     redirect_java_logging()
     hide_memoization_warning()
+
+
+def jtype_to_python(obj: Any) -> Any:
+    """Convert a Java type to a native Python type if possible."""
+    if isinstance(obj, JString):
+        return str(obj)
+    if isinstance(obj, int):
+        return int(obj)
+    if isinstance(obj, float):
+        return float(obj)
+    if isinstance(obj, bool):
+        return bool(obj)
+    if hasattr(obj, "to_pint"):
+        return obj.to_pint()
+    return obj

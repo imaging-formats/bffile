@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 def test_rgb_ndim_six(simple_file: Path) -> None:
     with BioFile(simple_file) as bf:
         arr = bf.as_array()
-        meta = bf.core_meta()
+        meta = bf.core_metadata()
         if meta.shape[5] > 1:
             assert arr.ndim == 6
         else:
@@ -25,7 +25,7 @@ def test_rgb_ndim_six(simple_file: Path) -> None:
 def test_non_rgb_ndim_five(rgb_file: Path) -> None:
     with BioFile(rgb_file) as bf:
         arr = bf.as_array()
-        meta = bf.core_meta()
+        meta = bf.core_metadata()
         if meta.shape[5] <= 1:
             assert arr.ndim == 5
         else:
@@ -54,7 +54,7 @@ def test_empty_xy_slice(opened_biofile: BioFile) -> None:
 
 
 def test_read_plane_out_of_bounds(opened_biofile: BioFile) -> None:
-    meta = opened_biofile.core_meta()
+    meta = opened_biofile.core_metadata()
     with pytest.raises(Exception):  # noqa: B017
         opened_biofile.read_plane(t=meta.shape[0] + 100)
 

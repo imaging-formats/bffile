@@ -22,6 +22,13 @@ class OMEShape(NamedTuple):
     x: int
     rgb: int
 
+    @property
+    def as_array_shape(self) -> tuple[int, ...]:
+        """Return 5-tuple (T,C,Z,Y,X) if rgb==1, else 6-tuple."""
+        if self.rgb > 1:
+            return (self.t, self.c, self.z, self.y, self.x, self.rgb)
+        return (self.t, self.c, self.z, self.y, self.x)
+
     def __repr__(self) -> str:
         return (
             f"(t={self.t}, c={self.c}, z={self.z}, "

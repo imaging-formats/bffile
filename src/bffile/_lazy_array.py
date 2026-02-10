@@ -78,16 +78,10 @@ class LazyBioArray:
 
         # Get metadata directly from the 2D list (stateless!)
         # This avoids hidden dependency on biofile's current state
-        meta = biofile.core_meta(series, resolution)
+        meta = biofile.core_metadata(series, resolution)
 
         # Follow same logic as to_numpy(): only include RGB dimension if > 1
-        full_shape = meta.shape
-        nt, nc, nz, ny, nx = full_shape[:5]
-        nrgb = full_shape[5] if len(full_shape) == 6 else 1
-        if nrgb > 1:
-            self._shape = (nt, nc, nz, ny, nx, nrgb)
-        else:
-            self._shape = (nt, nc, nz, ny, nx)
+        self._shape = meta.shape.as_array_shape
         self._dtype = meta.dtype
 
     @property
@@ -99,6 +93,11 @@ class LazyBioArray:
     def dtype(self) -> np.dtype:
         """Data type of array elements."""
         return self._dtype
+
+    @property
+    def size(self) -> int:
+        """Total number of elements in the array."""
+        return int(np.prod(self._shape))
 
     @property
     def ndim(self) -> int:
@@ -378,7 +377,7 @@ class LazyBioArray:
             reader.setResolution(self._resolution)
 
             # Get metadata once (avoid repeated lookups in hot loop)
-            meta = self._biofile.core_meta(self._series, self._resolution)
+            meta = self._biofile.core_metadata(self._series, self._resolution)
 
             # Fast loop - no locking overhead, no validation, minimal copying!
             # Uses optimized _read_plane that skips all per-call overhead

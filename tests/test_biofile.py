@@ -49,7 +49,7 @@ def test_operations_require_open(simple_file: Path) -> None:
     bf = BioFile(simple_file)
 
     with pytest.raises(RuntimeError, match="File not open"):
-        bf.core_meta()
+        bf.core_metadata()
 
     with pytest.raises(RuntimeError, match="File not open"):
         bf.as_array()
@@ -64,17 +64,17 @@ def test_operations_require_open(simple_file: Path) -> None:
 def test_reopen_after_close(simple_file: Path) -> None:
     bf = BioFile(simple_file)
     bf.open()
-    meta1 = bf.core_meta()
+    meta1 = bf.core_metadata()
     bf.close()
 
     bf.open()
-    meta2 = bf.core_meta()
+    meta2 = bf.core_metadata()
     assert meta1.shape == meta2.shape
     bf.close()
 
 
 def test_core_meta_returns_metadata(opened_biofile: BioFile) -> None:
-    meta = opened_biofile.core_meta()
+    meta = opened_biofile.core_metadata()
     assert hasattr(meta, "shape")
     assert hasattr(meta, "dtype")
     assert hasattr(meta, "dimension_order")
@@ -136,7 +136,7 @@ def test_bioformats_maven_coordinate() -> None:
 
 
 def test_read_plane_subregion(opened_biofile: BioFile) -> None:
-    meta = opened_biofile.core_meta()
+    meta = opened_biofile.core_metadata()
     ny, nx = meta.shape.y, meta.shape.x
 
     # Only test subregion if image is large enough
@@ -157,7 +157,7 @@ def test_as_array_with_series_resolution(multiseries_file: Path) -> None:
 def test_core_meta_resolution_bounds(pyramid_file: Path) -> None:
     with BioFile(pyramid_file) as bf:
         with pytest.raises(IndexError, match="out of range"):
-            bf.core_meta(series=0, resolution=100)
+            bf.core_metadata(series=0, resolution=100)
 
 
 def test_biofile_with_meta_disabled(simple_file: Path) -> None:

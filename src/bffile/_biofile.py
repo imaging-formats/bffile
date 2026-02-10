@@ -4,6 +4,7 @@ import os
 import sys
 import warnings
 import weakref
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from functools import cache
@@ -17,11 +18,15 @@ from ome_types import OME
 from typing_extensions import Self
 
 from bffile._core_metadata import CoreMetadata
+from bffile._series import Series
 
 from . import _utils
+from ._java_stuff import jtype_to_python
 from ._jimports import jimport
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     import dask.array
     import java.lang
     from loci.formats import IFormatReader
@@ -60,7 +65,7 @@ if _BFDIR:
     BIOFORMATS_MEMO_DIR.mkdir(exist_ok=True, parents=True)
 
 
-class BioFile:
+class BioFile(Sequence[Series]):
     """Read image and metadata from file supported by Bioformats.
 
     BioFile instances must be explicitly opened before use, either by:
@@ -153,7 +158,7 @@ class BioFile:
             i += resolution_count
         return result
 
-    def core_meta(self, series: int = 0, resolution: int = 0) -> CoreMetadata:
+    def core_metadata(self, series: int = 0, resolution: int = 0) -> CoreMetadata:
         """Get metadata for specified series and resolution.
 
         Parameters
@@ -194,6 +199,28 @@ class BioFile:
                 f"resolution levels)"
             )
         return self._core_meta_list[series][resolution]
+
+    def global_metadata(self) -> Mapping[str, Any]:
+        """Return the global metadata as a dictionary.
+
+        This includes all metadata that is not specific to a particular series or
+        resolution. The exact contents will depend on the file and reader, but may
+        include things like instrument information, acquisition settings, and other
+        annotations.
+
+        Returns
+        -------
+        Mapping[str, Any]
+            Global metadata key-value pairs
+
+        Raises
+        ------
+        RuntimeError
+            If file is not open
+        """
+        reader = self.java_reader()
+        meta = reader.getGlobalMetadata()
+        return {str(k): jtype_to_python(v) for k, v in meta.items()}
 
     def open(self) -> None:
         """Open file and initialize reader.
@@ -406,7 +433,7 @@ class BioFile:
                 )
 
             # Compute chunks based on tile size
-            meta = self.core_meta(series, resolution)
+            meta = self.core_metadata(series, resolution)
             nt, nc, nz, ny, nx, nrgb = meta.shape
             chunks = _utils.get_dask_tile_chunks(nt, nc, nz, ny, nx, tile_size)
             if nrgb > 1:
@@ -459,6 +486,42 @@ class BioFile:
     def __exit__(self, *_args: Any) -> None:
         """Exit context manager - ensures file is closed."""
         self.close()  # Idempotent, so safe to call
+
+    def __len__(self) -> int:
+        """Return the number of series in the file."""
+        if self._core_meta_list is None:
+            raise RuntimeError("File not open - call open() first")
+        return len(self._core_meta_list)
+
+    def __getitem__(self, index: int) -> Series:
+        """Return a :class:`Series` proxy for the given index.
+
+        Parameters
+        ----------
+        index : int
+            Series index (supports negative indexing).
+        """
+        if not isinstance(index, int):
+            raise TypeError(f"indices must be integers, not {type(index).__name__}")
+        n = len(self)  # also validates open state
+        if index < 0:
+            index += n
+        if index < 0 or index >= n:
+            raise IndexError(f"Series index {index} out of range (file has {n} series)")
+        from bffile._series import Series
+
+        return Series(self, index)
+
+    def __iter__(self) -> Iterator[Series]:
+        """Iterate over all series in the file."""
+        for i in range(len(self)):
+            yield self[i]
+
+    def __repr__(self) -> str:
+        name = Path(self._path).name
+        if self.closed:
+            return f"BioFile('{name}', closed)"
+        return f"BioFile('{name}', {len(self)} series)"
 
     def read_plane(
         self,
@@ -519,7 +582,7 @@ class BioFile:
         reader.setResolution(resolution)
 
         # Get metadata for this series/resolution
-        meta = self.core_meta(series, resolution)
+        meta = self.core_metadata(series, resolution)
         shape = meta.shape
 
         # Handle default slices

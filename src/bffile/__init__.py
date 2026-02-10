@@ -10,5 +10,6 @@ except PackageNotFoundError:  # pragma: no cover
 from ._biofile import BioFile
 from ._imread import imread
 from ._lazy_array import LazyBioArray
+from ._series import Series
 
-__all__ = ["BioFile", "LazyBioArray", "imread"]
+__all__ = ["BioFile", "LazyBioArray", "Series", "imread"]
