@@ -22,9 +22,9 @@ from . import _utils
 from ._jimports import jimport
 
 if TYPE_CHECKING:
+    import dask.array
     import java.lang
     from loci.formats import IFormatReader
-    from resource_backed_dask_array import ResourceBackedDaskArray
 
     from bffile._lazy_array import LazyBioArray
 
@@ -96,13 +96,6 @@ class BioFile:
         See: https://docs.openmicroscopy.org/bio-formats/latest/formats/options.html
         For example: to turn off chunkmap table reading for ND2 files, use
         `options={"nativend2.chunkmap": False}`
-    dask_tiles : bool, optional
-        Whether to chunk the bioformats dask array by tiles to easily read sub-regions
-        with numpy-like array indexing. Defaults to False (images are read by entire
-        planes).
-    tile_size : tuple[int, int], optional
-        Tuple that sets the tile size of y and x axis, respectively.
-        By default, it will use optimal values computed by bioformats itself.
     """
 
     def __init__(
@@ -113,21 +106,9 @@ class BioFile:
         original_meta: bool = False,
         memoize: int | bool = 0,
         options: dict[str, bool] | None = None,
-        dask_tiles: bool = False,
-        tile_size: tuple[int, int] | None = None,
     ):
         self._path = str(Path(path).expanduser().absolute())
         self._lock = RLock()
-        self.dask_tiles = dask_tiles
-
-        if tile_size is not None:
-            if len(tile_size) != 2:
-                raise ValueError(f"tile_size must be length 2, got {len(tile_size)}")
-            if not all(isinstance(x, int) for x in tile_size):
-                raise ValueError(f"tile_size must be integers, got {tile_size}")
-            tile_size = tuple(tile_size)  # type: ignore[assignment]
-
-        self._tile_size_override = tile_size
         self._meta = meta
         self._original_meta = original_meta
         self._memoize = memoize
@@ -229,56 +210,40 @@ class BioFile:
                 return
 
             # Create reader
-            self._java_reader = jimport("loci.formats.ImageReader")()
+            self._java_reader = reader = jimport("loci.formats.ImageReader")()
 
             # Use non-flattened resolution mode for cleaner API
             # This allows us to use setSeries(s) + setResolution(r) instead of
             # treating each resolution as a separate series
-            self._java_reader.setFlattenedResolutions(False)
+            reader.setFlattenedResolutions(False)
 
             # Wrap with Memoizer if requested
             # Note: Memoizer MUST wrap before setMetadataStore
             if self._memoize > 0:
                 Memoizer = jimport("loci.formats.Memoizer")
                 if BIOFORMATS_MEMO_DIR is not None:
-                    self._java_reader = Memoizer(
-                        self._java_reader, self._memoize, BIOFORMATS_MEMO_DIR
-                    )
+                    reader = Memoizer(reader, self._memoize, BIOFORMATS_MEMO_DIR)
                 else:
-                    self._java_reader = Memoizer(self._java_reader, self._memoize)
+                    reader = Memoizer(reader, self._memoize)
 
             # Configure reader
             if self._meta:
-                self._java_reader.setMetadataStore(self._create_ome_meta())
+                reader.setMetadataStore(self._create_ome_meta())
             if self._original_meta:
-                self._java_reader.setOriginalMetadataPopulated(True)
+                reader.setOriginalMetadataPopulated(True)
 
             if self._options:
                 mo = jimport("loci.formats.in_.DynamicMetadataOptions")()
                 for name, value in self._options.items():
                     mo.set(name, str(value))
-                self._java_reader.setMetadataOptions(mo)
+                reader.setMetadataOptions(mo)
 
             # Open file - this is the critical operation that can fail
             try:
-                self._java_reader.setId(self._path)
-
-                self._core_meta_list = self._get_core_metadata(self._java_reader)
-
-                # Setup tile size if needed
-                if self.dask_tiles:
-                    if self._tile_size_override is None:
-                        self.tile_size: tuple[int, int] = (
-                            self._java_reader.getOptimalTileHeight(),
-                            self._java_reader.getOptimalTileWidth(),
-                        )
-                    else:
-                        self.tile_size = self._tile_size_override
-
+                reader.setId(self._path)
+                self._core_meta_list = self._get_core_metadata(reader)
                 # The finalizer's alive state is now the source of truth for open/closed
-                self._finalizer = weakref.finalize(
-                    self, _close_java_reader, self._java_reader
-                )
+                self._finalizer = weakref.finalize(self, _close_java_reader, reader)
 
             except Exception:  # pragma: no cover
                 self.close()
@@ -350,7 +315,8 @@ class BioFile:
         series: int = 0,
         resolution: int = 0,
         chunks: str | tuple = "auto",
-    ) -> ResourceBackedDaskArray:
+        tile_size: tuple[int, int] | str | None = None,
+    ) -> dask.array.Array:
         """Create dask array for the specified series and resolution.
 
         This method wraps the LazyBioArray in a dask array, enabling lazy
@@ -361,9 +327,9 @@ class BioFile:
         where `[r]` refers to an optional RGB dimension with size 3 or 4.
         If the image is RGB it will have `ndim==6`, otherwise `ndim` will be 5.
 
-        The returned object is a `ResourceBackedDaskArray`, which ensures the
-        file is open when computing chunks.
-        See: https://github.com/tlambert03/resource-backed-dask-array
+        The dask array wraps a LazyBioArray, which reads data on-demand from
+        Bio-Formats. The BioFile instance must remain open while the dask array
+        is being computed.
 
         Parameters
         ----------
@@ -377,20 +343,51 @@ class BioFile:
             - (1, 1, 1, -1, -1): Each T, C, Z separate, full Y, X planes
             - (1, 1, 1, 512, 512): Tile into 512x512 chunks
 
+            **Mutually exclusive with tile_size.** If tile_size is provided,
+            chunks must be "auto" (default).
+        tile_size : tuple[int, int] or "auto", optional
+            Alternative way to specify chunking for tile-based access patterns.
+            If provided, chunks the Y and X dimensions into tiles of the specified
+            size, with each T, C, Z as separate chunks.
+
+            - (512, 512): Use 512x512 tiles for Y and X dimensions
+            - "auto": Query Bio-Formats for optimal tile size
+            - None: Use chunks parameter (default)
+
+            **Mutually exclusive with chunks.** If tile_size is provided,
+            chunks must be "auto" (default).
+
         Returns
         -------
-        ResourceBackedDaskArray
+        dask.array.Array
+            Returns a standard dask array that reads from the LazyBioArray on-demand.
+
+        Raises
+        ------
+        ValueError
+            If both chunks and tile_size are specified (they are mutually exclusive)
 
         Examples
         --------
+        Basic usage with automatic chunking:
+
         >>> bf = BioFile("image.nd2")
-        >>> darr = bf.to_dask(series=0, chunks=(1, 1, 1, -1, -1))
-        >>> # Lazy computation - nothing executes yet
-        >>> result = darr.mean(axis=(1, 2))
-        >>> # Execute with single-threaded scheduler (required for Bio-Formats)
+        >>> darr = bf.to_dask(series=0)  # chunks="auto"
+
+        Explicit chunk specification:
+
+        >>> darr = bf.to_dask(chunks=(1, 1, 1, -1, -1))  # Full Y, X planes
+
+        Tile-based chunking:
+
+        >>> darr = bf.to_dask(tile_size=(512, 512))  # 512x512 tiles
+        >>> darr = bf.to_dask(tile_size="auto")  # Bio-Formats optimal tiles
+
+        Execute computation:
+
         >>> import dask
         >>> with dask.config.set(scheduler="synchronous"):
-        ...     computed = result.compute()
+        ...     result = darr.mean(axis=(1, 2)).compute()
         """
         try:
             import dask.array as da
@@ -400,11 +397,39 @@ class BioFile:
                 "Please install with `pip install bffile[dask]`"
             ) from e
 
-        # Handle legacy dask_tiles behavior
-        if chunks == "auto" and self.dask_tiles:
+        # Validate mutually exclusive parameters
+        if tile_size is not None and chunks != "auto":
+            raise ValueError(
+                "chunks and tile_size are mutually exclusive. "
+                "When using tile_size, leave chunks as 'auto' (default)."
+            )
+
+        # Compute chunks from tile_size if provided
+        if tile_size is not None:
+            # Validate tile_size format
+            if tile_size == "auto":
+                # Query Bio-Formats for optimal tile size
+                reader = self.java_reader()
+                reader.setSeries(series)
+                reader.setResolution(resolution)
+                tile_size = (
+                    reader.getOptimalTileHeight(),
+                    reader.getOptimalTileWidth(),
+                )
+            elif not (
+                isinstance(tile_size, tuple)
+                and len(tile_size) == 2
+                and all(isinstance(x, int) for x in tile_size)
+            ):
+                raise ValueError(
+                    f"tile_size must be a tuple of two integers or 'auto', "
+                    f"got {tile_size}"
+                )
+
+            # Compute chunks based on tile size
             meta = self.core_meta(series, resolution)
             nt, nc, nz, ny, nx, nrgb = meta.shape
-            chunks = _utils.get_dask_tile_chunks(nt, nc, nz, ny, nx, self.tile_size)
+            chunks = _utils.get_dask_tile_chunks(nt, nc, nz, ny, nx, tile_size)
             if nrgb > 1:
                 chunks = (*chunks, nrgb)  # type: ignore[assignment]
 
@@ -557,7 +582,6 @@ class BioFile:
         BioFile instances per thread rather than sharing a single instance.
         """
         reader = self.java_reader()
-
         reader.setSeries(series)
         reader.setResolution(resolution)
 
@@ -565,8 +589,53 @@ class BioFile:
         meta = self.core_meta(series, resolution)
         shape = meta.shape
 
+        # Handle default slices
         y = y if y is not None else slice(0, shape.y)
         x = x if x is not None else slice(0, shape.x)
+
+        # Call optimized internal method
+        im = self._read_plane(reader, meta, t, c, z, y, x)
+
+        # If buffer provided, copy into it (for reuse in loops)
+        if buffer is not None:
+            buffer[:] = im
+            return buffer
+
+        return im
+
+    def _read_plane(
+        self,
+        reader: IFormatReader,
+        meta: CoreMetadata,
+        t: int,
+        c: int,
+        z: int,
+        y: slice,
+        x: slice,
+    ) -> np.ndarray:
+        """
+        Fast plane reading for hot path (internal use only).
+
+        This method skips all validation, metadata lookups, and series/resolution
+        setting, assuming they've been done once before entering a tight loop.
+
+        Parameters
+        ----------
+        reader : IFormatReader
+            Java reader (already set to correct series/resolution)
+        meta : CoreMetadata
+            Metadata for current series/resolution (avoid repeated lookups)
+        t, c, z : int
+            Plane coordinates
+        y, x : slice
+            Sub-region slices (not None)
+
+        Returns
+        -------
+        np.ndarray
+            Plane data as 2D or 3D array
+        """
+        shape = meta.shape
 
         # Get bytes from bioformats
         idx = reader.getIndex(z, c, t)
@@ -587,11 +656,6 @@ class BioFile:
                 im = np.transpose(im, (1, 2, 0))
         else:
             im.shape = (ywidth, xwidth)
-
-        # If buffer provided, copy into it (for reuse in loops)
-        if buffer is not None:
-            buffer[:] = im
-            return buffer
 
         return im
 

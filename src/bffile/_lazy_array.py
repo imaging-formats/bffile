@@ -379,29 +379,23 @@ class LazyBioArray:
         # This is much faster than acquiring/releasing on every plane
         with self._biofile._lock:
             # Set series and resolution once at start (not on every iteration)
-            self._biofile.java_reader().setSeries(self._series)
-            self._biofile.java_reader().setResolution(self._resolution)
+            reader = self._biofile.java_reader()
+            reader.setSeries(self._series)
+            reader.setResolution(self._resolution)
 
-            # Fast loop - no locking overhead, minimal copying!
+            # Get metadata once (avoid repeated lookups in hot loop)
+            meta = self._biofile.core_meta(self._series, self._resolution)
+
+            # Fast loop - no locking overhead, no validation, minimal copying!
+            # Uses optimized _read_plane that skips all per-call overhead
+            read_plane = self._biofile._read_plane  # Local reference for speed
             out_t = 0
             for t in t_range:
                 out_c = 0
                 for c in c_range:
                     out_z = 0
                     for z in z_range:
-                        # Read plane (returns zero-copy view of Java buffer)
-                        # Note: we pass series/resolution even though already set,
-                        # because read_plane will call setSeries/setResolution again.
-                        # This is safe (idempotent) and keeps the API explicit.
-                        plane = self._biofile.read_plane(
-                            t=t,
-                            c=c,
-                            z=z,
-                            y=y_slice,
-                            x=x_slice,
-                            series=self._series,
-                            resolution=self._resolution,
-                        )
+                        plane = read_plane(reader, meta, t, c, z, y_slice, x_slice)
 
                         # Build index tuple based on which dimensions are not squeezed
                         idx = []

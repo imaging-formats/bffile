@@ -49,14 +49,32 @@ def test_to_dask_import_error(
 
 
 def test_to_dask_with_tiles(simple_file: Path) -> None:
+    """Test tile-based chunking with explicit tile size."""
     pytest.importorskip("dask")
-    with BioFile(simple_file, dask_tiles=True, tile_size=(16, 16)) as bf:
-        darr = bf.to_dask()
+    with BioFile(simple_file) as bf:
+        darr = bf.to_dask(tile_size=(16, 16))
         assert darr.chunks is not None
 
 
-def test_to_dask_tiles_with_auto_chunks(simple_file: Path) -> None:
+def test_to_dask_tiles_auto(simple_file: Path) -> None:
+    """Test tile-based chunking with auto-computed tile size."""
     pytest.importorskip("dask")
-    with BioFile(simple_file, dask_tiles=True) as bf:
-        darr = bf.to_dask(chunks="auto")
-        assert darr is not None
+    with BioFile(simple_file) as bf:
+        darr = bf.to_dask(tile_size="auto")
+        assert darr.chunks is not None
+
+
+def test_to_dask_tile_size_chunks_mutually_exclusive(simple_file: Path) -> None:
+    """Test that tile_size and chunks cannot be used together."""
+    pytest.importorskip("dask")
+    with BioFile(simple_file) as bf:
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            bf.to_dask(chunks=(1, 1, 1, -1, -1), tile_size=(512, 512))
+
+
+def test_to_dask_tile_size_validation(simple_file: Path) -> None:
+    """Test that tile_size is validated."""
+    pytest.importorskip("dask")
+    with BioFile(simple_file) as bf:
+        with pytest.raises(ValueError, match="tile_size must be"):
+            bf.to_dask(tile_size=(512,))  # type: ignore[arg-type]
