@@ -18,12 +18,26 @@ pip install git+https://github.com/tlambert03/bffile
 
 ```python
 from bffile import BioFile
+import numpy as np
 
 with BioFile("tests/data/ND2_dims_p4z5t3c2y32x32.nd2") as bf:
+    # Access OME metadata
     print(bf.ome_metadata)  # ome_types.OME object
-    print(bf.shape)  # shows full shape
-    data = bf.to_numpy(series=1)
-    print(data.shape, data.dtype)
+
+    # Get lazy array for series 0 (no data loaded yet)
+    arr = bf.as_array(series=0)
+    print(arr.shape, arr.dtype)  # (T, C, Z, Y, X) shape
+
+    # Index specific planes on-demand
+    plane = arr[0, 0, 2]  # Only reads this plane
+    roi = arr[:, :, :, 100:200, 50:150]  # Sub-regions
+
+    # Materialize all data when needed
+    full_data = np.array(arr)
+
+    # Or use dask for lazy computation
+    darr = bf.to_dask(series=0, chunks="auto")
+    result = darr.mean(axis=2).compute()
 ```
 
 ### Selecting Bio-Formats Version

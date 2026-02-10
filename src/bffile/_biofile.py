@@ -265,40 +265,49 @@ class BioFile:
     def as_array(self, series: int = 0, resolution: int = 0) -> LazyBioArray:
         """Return a lazy numpy-compatible array that reads data on-demand.
 
-        The returned array supports numpy-style indexing and implements the
-        `__array__()` protocol for seamless numpy integration. To cast it to a numpy
-        array (which materializes *all* data for the given series), use `np.array()` on
-        it.
+        The returned array behaves like a numpy array but reads data from disk
+        only when indexed. Use it just like a numpy array - any indexing operation
+        will read only the requested planes or sub-regions, not the entire dataset.
+
+        Supports integer and slice indexing on all dimensions. The array also
+        implements the `__array__()` protocol for seamless numpy integration.
 
         Parameters
         ----------
         series : int, optional
-            The series index to retrieve, by default 0
+            Series index, by default 0
         resolution : int, optional
             Resolution level (0 = full resolution), by default 0
 
         Returns
         -------
         LazyBioArray
-            Lazy array that reads from Bio-Formats on-demand
+            Lazy array in (T, C, Z, Y, X) or (T, C, Z, Y, X, rgb) format
 
         Examples
         --------
+        Index like a numpy array - only reads what you request:
+
         >>> with BioFile("image.nd2") as bf:
-        ...     arr = bf.as_array(series=0)  # No data read yet
-        ...     plane = arr[0, 0, 2]  # Reads only this plane
-        ...     roi = arr[0, 0, :, 100:200, 50:150]  # Reads sub-XY-regions across all Z
+        ...     arr = bf.as_array()  # No data read yet
         ...
-        ...     # Convert to numpy when needed
-        ...     full_data = np.array(arr)  # Reads all data
+        ...     # Read single plane (t=0, c=0, z=2)
+        ...     plane = arr[0, 0, 2]  # Only this plane read from disk
+        ...
+        ...     # Read all timepoints for one channel/z
+        ...     timeseries = arr[:, 0, 2]  # Reads T planes
+        ...
+        ...     # Read sub-region across entire volume
+        ...     roi = arr[:, :, :, 100:200, 50:150]  # Reads 100x50 sub-regions
+        ...
+        ...     # Materialize entire dataset (two equivalent ways)
+        ...     full_data = arr[:]  # Using slice notation
+        ...     full_data = np.array(arr)  # Using numpy conversion
 
         Notes
         -----
-        - The BioFile instance must remain open while using the lazy array
-        - Multiple LazyBioArray instances can safely coexist, each reading
-          from their own series independently
-        - Resolution parameter is included for future compatibility but currently
-          only resolution 0 is fully supported
+        BioFile must remain open while using the array. Multiple arrays can
+        coexist, each reading from their own series independently.
         """
         if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
@@ -314,19 +323,10 @@ class BioFile:
         chunks: str | tuple = "auto",
         tile_size: tuple[int, int] | str | None = None,
     ) -> dask.array.Array:
-        """Create dask array for the specified series and resolution.
+        """Create dask array for lazy computation on Bio-Formats data.
 
-        This method wraps the LazyBioArray in a dask array, enabling lazy
-        computation workflows. The dask array uses single-threaded execution
-        by default (required for Bio-Formats thread safety).
-
-        Note: the order of the returned array will *always* be `TCZYX[r]`,
-        where `[r]` refers to an optional RGB dimension with size 3 or 4.
-        If the image is RGB it will have `ndim==6`, otherwise `ndim` will be 5.
-
-        The dask array wraps a LazyBioArray, which reads data on-demand from
-        Bio-Formats. The BioFile instance must remain open while the dask array
-        is being computed.
+        Returns a dask array in TCZYX[r] order that wraps a LazyBioArray.
+        Uses single-threaded scheduler by default for Bio-Formats thread safety.
 
         Parameters
         ----------
@@ -335,56 +335,38 @@ class BioFile:
         resolution : int, optional
             Resolution level (0 = full resolution), by default 0
         chunks : str or tuple, default "auto"
-            Chunk specification for dask array. Common values:
+            Chunk specification. Examples:
             - "auto": Let dask decide (default)
-            - (1, 1, 1, -1, -1): Each T, C, Z separate, full Y, X planes
-            - (1, 1, 1, 512, 512): Tile into 512x512 chunks
-
-            **Mutually exclusive with tile_size.** If tile_size is provided,
-            chunks must be "auto" (default).
+            - (1, 1, 1, -1, -1): Full Y,X planes per T,C,Z
+            - (1, 1, 1, 512, 512): 512x512 tiles
+            Mutually exclusive with tile_size.
         tile_size : tuple[int, int] or "auto", optional
-            Alternative way to specify chunking for tile-based access patterns.
-            If provided, chunks the Y and X dimensions into tiles of the specified
-            size, with each T, C, Z as separate chunks.
-
-            - (512, 512): Use 512x512 tiles for Y and X dimensions
-            - "auto": Query Bio-Formats for optimal tile size
-            - None: Use chunks parameter (default)
-
-            **Mutually exclusive with chunks.** If tile_size is provided,
-            chunks must be "auto" (default).
+            Tile-based chunking for Y,X dimensions (T,C,Z get chunks of 1).
+            - (512, 512): Use 512x512 tiles
+            - "auto": Query Bio-Formats optimal tile size
+            Mutually exclusive with chunks.
 
         Returns
         -------
         dask.array.Array
-            Returns a standard dask array that reads from the LazyBioArray on-demand.
+            Dask array that reads data on-demand. Shape is (T, C, Z, Y, X) or
+            (T, C, Z, Y, X, rgb) for RGB images.
 
         Raises
         ------
         ValueError
-            If both chunks and tile_size are specified (they are mutually exclusive)
+            If both chunks and tile_size are specified
 
         Examples
         --------
-        Basic usage with automatic chunking:
+        >>> with BioFile("image.nd2") as bf:
+        ...     darr = bf.to_dask(chunks=(1, 1, 1, -1, -1))
+        ...     result = darr.mean(axis=2).compute()  # Z-projection
 
-        >>> bf = BioFile("image.nd2")
-        >>> darr = bf.to_dask(series=0)  # chunks="auto"
-
-        Explicit chunk specification:
-
-        >>> darr = bf.to_dask(chunks=(1, 1, 1, -1, -1))  # Full Y, X planes
-
-        Tile-based chunking:
-
-        >>> darr = bf.to_dask(tile_size=(512, 512))  # 512x512 tiles
-        >>> darr = bf.to_dask(tile_size="auto")  # Bio-Formats optimal tiles
-
-        Execute computation:
-
-        >>> import dask
-        >>> with dask.config.set(scheduler="synchronous"):
-        ...     result = darr.mean(axis=(1, 2)).compute()
+        Notes
+        -----
+        - BioFile must remain open during computation
+        - Uses synchronous scheduler by default (required for thread safety)
         """
         try:
             import dask.array as da
@@ -489,94 +471,48 @@ class BioFile:
         resolution: int = 0,
         buffer: np.ndarray | None = None,
     ) -> np.ndarray:
-        """
-        Read a single plane or sub-region directly from Bio-Formats.
+        """Read a single plane or sub-region directly from Bio-Formats.
 
-        This is the low-level method that directly wraps Bio-Formats' `openBytes()`
-        API. It provides maximum control and efficiency for reading specific planes
-        or rectangular sub-regions.
+        Low-level method wrapping Bio-Formats' `openBytes()` API. Provides
+        fine-grained control for reading specific planes or rectangular
+        sub-regions. Most users should use `as_array()` or `to_dask()` instead.
 
-        **This method is NOT thread-safe.** For multi-threaded access, create
-        separate BioFile instances per thread (recommended) or manage your own
-        locking around calls to this method.
-
-        Most users should use higher-level methods like `to_numpy()`, `to_dask()`,
-        or `as_array()`. Use this method when you need:
-
-        - Fine-grained control over which planes to read
-        - Efficient sub-region reading without loading full planes
-        - Custom caching or streaming strategies
-        - Direct access to Bio-Formats' coordinate system
+        **Not thread-safe.** Create separate BioFile instances per thread.
 
         Parameters
         ----------
         t : int, optional
-            Time index (default: 0)
+            Time index, by default 0
         c : int, optional
-            Channel index (default: 0)
+            Channel index, by default 0
         z : int, optional
-            Z-slice index (default: 0)
+            Z-slice index, by default 0
         y : slice, optional
-            Y-axis slice for sub-region reading (default: full height)
-            Example: `slice(100, 200)` reads rows 100-199
+            Y-axis slice (default: full height). Example: `slice(100, 200)`
         x : slice, optional
-            X-axis slice for sub-region reading (default: full width)
-            Example: `slice(50, 150)` reads columns 50-149
+            X-axis slice (default: full width). Example: `slice(50, 150)`
         series : int, optional
-            Series index to read from, by default 0
+            Series index, by default 0
         resolution : int, optional
             Resolution level (0 = full resolution), by default 0
         buffer : np.ndarray, optional
-            Pre-allocated buffer to read into for efficiency in tight loops.
-            If provided, data is copied into this buffer (reusing it across reads).
-            Buffer must have correct shape and dtype. Used internally for
-            optimization.
+            Pre-allocated buffer for efficient reuse in loops
 
         Returns
         -------
         np.ndarray
-            2D array of shape (height, width) for grayscale images, or
-            3D array of shape (height, width, rgb) for RGB images.
-            The array is a view when possible (zero-copy via memoryview).
-
-        Raises
-        ------
-        RuntimeError
-            If file is not open or not properly initialized
+            Shape (height, width) for grayscale or (height, width, rgb) for RGB
 
         Examples
         --------
-        Read a specific plane:
-
         >>> with BioFile("image.nd2") as bf:
         ...     plane = bf.read_plane(t=0, c=1, z=5)
-        ...     print(plane.shape)
-        (512, 512)
-
-        Read a sub-region (100x100 pixels at position 200,200):
-
-        >>> with BioFile("image.nd2") as bf:
-        ...     roi = bf.read_plane(t=0, c=0, z=0, y=slice(200, 300), x=slice(200, 300))
-        ...     print(roi.shape)
-        (100, 100)
-
-        Multi-series file (always specify series):
-
-        >>> with BioFile("multi.czi") as bf:
-        ...     plane_s0 = bf.read_plane(t=0, c=0, z=0, series=0)
-        ...     plane_s1 = bf.read_plane(t=0, c=0, z=0, series=1)
+        ...     roi = bf.read_plane(y=slice(200, 300), x=slice(200, 300))
 
         See Also
         --------
-        to_numpy : Load entire dataset into memory (thread-safe)
-        to_dask : Create a dask array for lazy loading (thread-safe)
-        as_array : Create a numpy-compatible lazy array (thread-safe)
-
-        Notes
-        -----
-        This method does NOT acquire locks internally. The underlying Bio-Formats
-        reader is not thread-safe. For parallel processing, create separate
-        BioFile instances per thread rather than sharing a single instance.
+        as_array : Create a numpy-compatible lazy array
+        to_dask : Create a dask array for lazy loading
         """
         reader = self.java_reader()
         reader.setSeries(series)

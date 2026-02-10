@@ -11,58 +11,52 @@ if TYPE_CHECKING:
 
 
 class LazyBioArray:
-    """Numpy-compatible lazy array that reads data on-demand from Bio-Formats.
+    """Pythonic lazy array interface for a single Bio-Formats Series/Resolution.
 
-    Unlike `BioFile.to_numpy()` which loads all data into memory immediately,
-    this class returns a lazy array that only reads planes or sub-regions when
-    indexed. This enables efficient exploration of large datasets.
+    This object provides a numpy-compatible API for on-demand access to a
+    specific series and resolution level in a Bio-Formats file. In the
+    Bio-Formats Java API, each file can contain multiple series (e.g., wells
+    in a plate, fields of view, or tiled regions), and each series can have
+    multiple resolution levels (pyramid layers). LazyBioArray represents one
+    of these series/resolution combinations as a numpy-style array.
 
-    The array supports numpy-style indexing with integers and slices, and
-    implements the `__array__()` protocol for seamless numpy integration.
+    The array is always 5-dimensional with shape (T, C, Z, Y, X), though some
+    dimensions may be singletons (size 1) depending on the image acquisition.
+    For RGB/RGBA images, a 6th dimension is added: (T, C, Z, Y, X, rgb).
+    Data is read from disk only when indexed, enabling efficient access to
+    large datasets without loading everything into memory.
+
+    Supports integer and slice indexing along with the `__array__()` protocol
+    for seamless numpy integration.
 
     Parameters
     ----------
     biofile : BioFile
-        The BioFile instance to read from. Must remain open while the array
-        is in use.
+        BioFile instance to read from. Must remain open during use.
 
     Attributes
     ----------
     shape : tuple[int, ...]
         Array shape in (T, C, Z, Y, X) or (T, C, Z, Y, X, rgb) format
     dtype : np.dtype
-        Data type of the array elements
+        Data type of array elements
     ndim : int
-        Number of dimensions
+        Number of dimensions (5 for grayscale, 6 for RGB)
 
     Examples
     --------
-    Basic indexing:
-
     >>> with BioFile("image.nd2") as bf:
     ...     arr = bf.as_array()  # No data read yet
-    ...     # Read single plane
-    ...     plane = arr[0, 0, 2]
-    ...     # Read time series for one channel/z
-    ...     timeseries = arr[:, 0, 5]
-    ...     # Read sub-region across all planes
-    ...     roi = arr[:, :, :, 100:200, 50:150]
-
-    Convert to numpy when needed:
-
-    >>> with BioFile("image.nd2") as bf:
-    ...     arr = bf.as_array()
-    ...     # Read all data into memory
-    ...     full_data = np.array(arr)
-    ...     # Works with numpy functions
-    ...     max_projection = np.max(arr, axis=2)
+    ...     plane = arr[0, 0, 2]  # Read single plane
+    ...     roi = arr[:, :, :, 100:200, 50:150]  # Read sub-region
+    ...     full_data = np.array(arr)  # Materialize all data
+    ...     max_z = np.max(arr, axis=2)  # Works with numpy functions
 
     Notes
     -----
-    - The BioFile instance must remain open while using this array
-    - Indexing with step != 1 is not supported (e.g., `arr[::2]`)
-    - Fancy indexing and boolean masks are not supported
-    - Thread safety: Use the same constraints as BioFile (one instance per thread)
+    - BioFile must remain open while using this array
+    - Step indexing (`arr[::2]`), fancy indexing, and boolean masks not supported
+    - Not thread-safe: create separate BioFile instances per thread
     """
 
     def __init__(self, biofile: BioFile, series: int, resolution: int = 0) -> None:
