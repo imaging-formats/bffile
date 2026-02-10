@@ -44,7 +44,7 @@ def test_xy_subregion(opened_biofile: BioFile) -> None:
     subregion = arr[:, :, :, 5:10, 5:10]
     expected_shape = (nt, nc, nz, 5, 5)
     if arr.is_rgb:
-        expected_shape = expected_shape + (meta.shape[5],)
+        expected_shape = (*expected_shape, meta.shape[5])
     assert subregion.shape == expected_shape
 
 
@@ -113,3 +113,130 @@ def test_repr(simple_file: Path) -> None:
         assert "LazyBioArray" in repr_str
         assert "shape=" in repr_str
         assert "dtype=" in repr_str
+
+
+def test_conditional_dimension_slicing(opened_biofile: BioFile) -> None:
+    """Test slicing along dimensions that exist."""
+    arr = opened_biofile.as_array()
+    meta = opened_biofile.core_meta()
+    nt, nc, nz = meta.shape.t, meta.shape.c, meta.shape.z
+
+    # Only test multi-timepoint slicing if nt > 1
+    if nt > 1:
+        result = arr[:2, 0, 0]
+        assert result.shape[0] == 2
+
+    # Only test multi-channel slicing if nc > 1
+    if nc > 1:
+        result = arr[0, :, 0]
+        assert result.shape[0] == nc
+
+    # Only test multi-z slicing if nz > 1
+    if nz > 1:
+        result = arr[0, 0, :]
+        assert result.shape[0] == nz
+
+
+def test_partial_key_indexing(opened_biofile: BioFile) -> None:
+    """Test indexing with fewer dimensions than array has."""
+    arr = opened_biofile.as_array()
+
+    # Should implicitly add full slices for missing dimensions
+    result = arr[0]
+    expected_ndim = arr.ndim - 1
+    assert result.ndim == expected_ndim
+
+
+def test_dimension_squeezing(opened_biofile: BioFile) -> None:
+    """Test that integer indexing properly squeezes dimensions."""
+    arr = opened_biofile.as_array()
+
+    if arr.is_rgb:
+        # 6D → 3D by fixing T, C, Z (leaves Y, X, RGB)
+        plane = arr[0, 0, 0]
+        assert plane.ndim == 3
+        assert plane.shape[-1] in (3, 4)  # RGB or RGBA
+    else:
+        # 5D → 2D by fixing T, C, Z (leaves Y, X)
+        plane = arr[0, 0, 0]
+        assert plane.ndim == 2
+
+
+def test_lazy_vs_numpy_single_plane(opened_biofile: BioFile) -> None:
+    """Verify lazy array returns same data as direct numpy conversion."""
+    arr = opened_biofile.as_array()
+    meta = opened_biofile.core_meta()
+
+    # Use lower resolution for pyramid files to avoid 2GB limit
+    if meta.resolution_count > 1:
+        arr = opened_biofile.as_array(resolution=1)
+
+    # Skip if plane would be too large (>100MB to keep test fast)
+    frame_size = meta.shape.y * meta.shape.x * meta.shape.rgb
+    plane_size_mb = (frame_size * meta.dtype.itemsize) / (1024 * 1024)
+    if plane_size_mb > 100:
+        pytest.skip("Plane too large for fast correctness test")
+
+    # Get ground truth via full materialization
+    numpy_data = np.asarray(arr)
+
+    # Test single plane
+    lazy_plane = arr[0, 0, 0]
+    numpy_plane = numpy_data[0, 0, 0]
+
+    assert np.array_equal(lazy_plane, numpy_plane)
+
+
+def test_lazy_vs_numpy_subregion(opened_biofile: BioFile) -> None:
+    """Verify subregion reads match numpy."""
+    arr = opened_biofile.as_array()
+    meta = opened_biofile.core_meta()
+    ny, nx = meta.shape.y, meta.shape.x
+
+    # Skip if image too small or too large
+    if ny < 20 or nx < 20:
+        pytest.skip("Image too small for subregion test")
+
+    plane_size_mb = (ny * nx * meta.shape.rgb * meta.dtype.itemsize) / (1024 * 1024)
+    if plane_size_mb > 100:
+        pytest.skip("Plane too large for fast correctness test")
+
+    # Get ground truth
+    numpy_data = np.asarray(arr)
+
+    # Test subregion (center 10x10 pixels)
+    y_mid, x_mid = ny // 2, nx // 2
+    y_slice = slice(y_mid - 5, y_mid + 5)
+    x_slice = slice(x_mid - 5, x_mid + 5)
+
+    lazy_roi = arr[0, 0, 0, y_slice, x_slice]
+    numpy_roi = numpy_data[0, 0, 0, y_slice, x_slice]
+
+    assert np.array_equal(lazy_roi, numpy_roi)
+
+
+def test_multi_series_independence(multiseries_file) -> None:
+    """Critical: Verify interleaved reads from multiple series don't corrupt data."""
+    with BioFile(multiseries_file) as bf:
+        # Get ground truth for both series
+        truth_s0 = np.asarray(bf.as_array(series=0))
+        truth_s1 = np.asarray(bf.as_array(series=1))
+
+        # Create lazy arrays
+        arr0 = bf.as_array(series=0)
+        arr1 = bf.as_array(series=1)
+
+        # Read from series 0
+        lazy_s0_first = arr0[0, 0, 0]
+
+        # Read from series 1 (could potentially corrupt arr0's state)
+        lazy_s1 = arr1[0, 0, 0]
+
+        # Read from series 0 again - should still be correct
+        lazy_s0_second = arr0[0, 0, 0]
+
+        # Verify correctness
+        assert np.array_equal(lazy_s0_first, truth_s0[0, 0, 0])
+        assert np.array_equal(lazy_s1, truth_s1[0, 0, 0])
+        assert np.array_equal(lazy_s0_second, truth_s0[0, 0, 0])
+        assert np.array_equal(lazy_s0_first, lazy_s0_second)

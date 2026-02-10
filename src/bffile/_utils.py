@@ -2,17 +2,12 @@ from __future__ import annotations
 
 import logging
 import re
+import warnings
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import NamedTuple
 from xml.etree import ElementTree as ET
 
 import numpy as np
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-    from ome_types import OME
-
 
 log = logging.getLogger("bffile")
 
@@ -155,13 +150,9 @@ class DimensionNames:
 
 
 def clean_ome_xml_for_known_issues(xml: str) -> str:
-    """
-    Clean an OME XML string for known issues created by AICS or MicroManager
-    systems and tools.
+    """Clean OME XML string for known issues seen in the wild.
 
-    Commonly this is used for cleaning a file produced by AICS prior to noticing the
-    issue (2021), or for other users of aicsimageio as a whole prior to 4.x series of
-    releases.
+    Particularly, files created by AICS or MicroManager
 
     The result of this function should be an OME XML string that is relatively the
     same (no major pieces missing) but that validates against the reference OME
@@ -196,10 +187,13 @@ def clean_ome_xml_for_known_issues(xml: str) -> str:
     if namespace_matches is not None:
         namespace = namespace_matches.group(0)
     else:  # pragma: no cover
-        raise ValueError(
+        warnings.warn(
             "XML does not contain a namespace, "
-            "please report this issue with the file that caused it."
+            "please report this issue with the file that caused it.",
+            RuntimeWarning,
+            stacklevel=3,
         )
+        return xml
 
     # Fix MicroManager Instrument and Detector
     ome_instrument_id = ""
