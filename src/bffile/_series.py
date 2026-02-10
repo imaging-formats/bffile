@@ -150,3 +150,16 @@ class Series:
 
     def __repr__(self) -> str:
         return f"Series(index={self._index}, shape={self.shape}, dtype={self.dtype})"
+
+    def used_files(self, *, metadata_only: bool = False) -> list[str]:
+        """Return list of files needed to open this series.
+
+        Parameters
+        ----------
+        metadata_only : bool, optional
+            If True, only return files that do not contain pixel data (e.g., metadata,
+            companion files, etc...), by default `False`.
+        """
+        reader = self._biofile.java_reader()
+        reader.setSeries(self._index)
+        return [str(f) for f in reader.getSeriesUsedFiles(metadata_only)]

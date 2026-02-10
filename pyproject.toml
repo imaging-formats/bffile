@@ -50,6 +50,7 @@ test = [
 ]
 dev = [
     { include-group = "test" },
+    "cmap>=0.7.1",
     "ipython>=8.18.1",
     "pdbpp>=0.11.6 ; sys_platform != 'win32'",
     "prek>=0.2.19",

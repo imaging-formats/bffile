@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Any, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 
 import jpype
 import numpy as np
@@ -493,16 +493,26 @@ class BioFile(Sequence[Series]):
             raise RuntimeError("File not open - call open() first")
         return len(self._core_meta_list)
 
-    def __getitem__(self, index: int) -> Series:
-        """Return a :class:`Series` proxy for the given index.
+    @overload
+    def __getitem__(self, index: int) -> Series: ...
+    @overload
+    def __getitem__(self, index: slice) -> list[Series]: ...
+    def __getitem__(self, index: int | slice) -> Series | list[Series]:
+        """Return a [`Series`][bffile.Series] proxy for the given index.
 
         Parameters
         ----------
-        index : int
-            Series index (supports negative indexing).
+        index : int | slice
+            Series index or slice of series indices to retrieve
         """
-        if not isinstance(index, int):
-            raise TypeError(f"indices must be integers, not {type(index).__name__}")
+        if isinstance(index, int):
+            return self._get_series(index)
+        elif isinstance(index, slice):
+            return [self._get_series(i) for i in range(*index.indices(len(self)))]
+        raise TypeError(f"Invalid index type: {type(index)}")  # pragma: no cover
+
+    def _get_series(self, index: int) -> Series:
+        """Internal method to get a Series with index validation."""
         n = len(self)  # also validates open state
         if index < 0:
             index += n
@@ -511,6 +521,65 @@ class BioFile(Sequence[Series]):
         from bffile._series import Series
 
         return Series(self, index)
+
+    def used_files(self, *, metadata_only: bool = False) -> list[str]:
+        """Return complete list of files needed to open this dataset.
+
+        Parameters
+        ----------
+        metadata_only : bool, optional
+            If True, only return files that do not contain pixel data (e.g., metadata,
+            companion files, etc...), by default `False`.
+        """
+        return [str(x) for x in self.java_reader().getUsedFiles(metadata_only)]
+
+    def lookup_table(self, series: int = 0) -> np.ndarray | None:
+        """Return the color lookup table for an indexed-color series.
+
+        Parameters
+        ----------
+        series : int, optional
+            Series index, by default 0.
+
+        Returns
+        -------
+        np.ndarray | None
+            Array of shape `(N, 3)` with RGB values for each pixel index,
+            or None if the series is not indexed.
+
+        Examples
+        --------
+
+        To convert this object to a [`cmap.Colormap`][]:
+
+        ```python
+        import cmap
+        from bffile import BioFile
+
+        with BioFile("indexed_image.ome.tiff") as bf:
+            lut = bf.lookup_table()
+            if lut is not None:
+                colormap = cmap.Colormap(lut / lut.max())  # Normalize to [0, 1]
+        ```
+        """
+        # `is_indexed` is a bit of a misnomer here (but bioformats uses it)
+        # it really means "a LUT exists", not "the image is palette-based"
+        #   - True palette images (GIF, indexed PNG) → is_indexed=True, is_rgb=False
+        #   - Fluorescence with display LUT (ND2, CZI) → is_indexed=True, is_rgb=False
+        #   - Plain grayscale (basic TIFF, no LUT) → is_indexed=False, is_rgb=False
+        #   - RGB images → is_indexed=False, is_rgb=True
+        if not self.core_metadata(series).is_indexed:
+            return None
+
+        reader = self.java_reader()
+        reader.setSeries(series)
+        # Many readers require at least one openBytes call before LUT is available
+        reader.openBytes(0, 0, 0, 1, 1)
+        if (lut := reader.get16BitLookupTable()) is not None:
+            return np.asarray(lut, dtype=np.uint16).T
+        if (lut := reader.get8BitLookupTable()) is not None:
+            return np.asarray(lut, dtype=np.uint8).T
+        return None
 
     def __iter__(self) -> Iterator[Series]:
         """Iterate over all series in the file."""

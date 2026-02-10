@@ -95,11 +95,6 @@ class LazyBioArray:
         return self._dtype
 
     @property
-    def size(self) -> int:
-        """Total number of elements in the array."""
-        return int(np.prod(self._shape))
-
-    @property
     def ndim(self) -> int:
         """Number of dimensions."""
         return len(self._shape)
