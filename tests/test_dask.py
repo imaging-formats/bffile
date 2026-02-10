@@ -24,7 +24,7 @@ def test_to_dask_returns_array(simple_file: Path) -> None:
 def test_to_dask_custom_chunks(simple_file: Path) -> None:
     pytest.importorskip("dask")
     with BioFile(simple_file) as bf:
-        darr = bf.to_dask(chunks=(1, 1, 1, -1, -1, -1))
+        darr = bf.to_dask(chunks=(1, 1, 1, -1, -1))
         assert darr.chunks is not None
 
 

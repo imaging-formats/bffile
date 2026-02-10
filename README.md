@@ -16,6 +16,8 @@ pip install git+https://github.com/tlambert03/bffile
 
 ## Usage
 
+### Quick Start
+
 ```python
 from bffile import BioFile
 import numpy as np
@@ -38,6 +40,17 @@ with BioFile("tests/data/ND2_dims_p4z5t3c2y32x32.nd2") as bf:
     # Or use dask for lazy computation
     darr = bf.to_dask(series=0, chunks="auto")
     result = darr.mean(axis=2).compute()
+```
+
+For simple cases, use `imread()` to load a single series/resolution into memory:
+
+```python
+from bffile import imread
+
+# Read series0/resolution0 into numpy array
+# series and resolution parameters are optional and default to 0
+data = imread("image.nd2", series=0, resolution=0)  
+print(data.shape, data.dtype)  # (T, C, Z, Y, X) array
 ```
 
 ### Selecting Bio-Formats Version

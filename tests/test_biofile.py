@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-from bffile import BioFile
+from bffile import BioFile, imread
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -170,3 +170,9 @@ def test_biofile_with_original_meta(simple_file: Path) -> None:
     with BioFile(simple_file, original_meta=True) as bf:
         arr = bf.as_array()
         assert arr is not None
+
+
+def test_imread(simple_file: Path) -> None:
+    arr = imread(simple_file)
+    assert isinstance(arr, np.ndarray)
+    assert arr.ndim == 5
