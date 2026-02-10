@@ -25,8 +25,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def test_bffile(test_file: Path) -> None:
-    with BioFile(test_file) as bf:
+def test_bffile(any_file: Path) -> None:
+    with BioFile(any_file) as bf:
         # For pyramid files, use lower resolution to avoid 2GB limit
         num_resolutions = len(bf._core_meta_list[0])
         resolution = min(1, num_resolutions - 1)  # Use res 1 if available, else 0
@@ -161,9 +161,9 @@ def test_ome_shape_repr() -> None:
 # --------------------- BioFile tests ---------------------
 
 
-def test_biofile_properties(test_file: Path) -> None:
-    with BioFile(test_file) as bf:
-        assert bf.filename == str(test_file.expanduser().absolute())
+def test_biofile_properties(any_file: Path) -> None:
+    with BioFile(any_file) as bf:
+        assert bf.filename == str(any_file.expanduser().absolute())
         assert isinstance(bf.ome_xml, str)
         # ome_metadata parsing may fail for some exotic file formats
         try:
@@ -174,25 +174,25 @@ def test_biofile_properties(test_file: Path) -> None:
         assert bf.bioformats_version()
 
 
-def test_biofile_to_dask_explicit_series(test_file: Path) -> None:
-    with BioFile(test_file) as bf:
+def test_biofile_to_dask_explicit_series(any_file: Path) -> None:
+    with BioFile(any_file) as bf:
         arr = bf.to_dask(series=0)
         assert arr is not None
 
 
-def test_biofile_original_meta(test_file: Path) -> None:
-    with BioFile(test_file, original_meta=True) as bf:
+def test_biofile_original_meta(any_file: Path) -> None:
+    with BioFile(any_file, original_meta=True) as bf:
         assert bf.ome_xml is not None
 
 
-def test_biofile_memoize(test_file: Path, tmp_path: Path) -> None:
+def test_biofile_memoize(any_file: Path, tmp_path: Path) -> None:
     # Test with BIOFORMATS_MEMO_DIR set via monkeypatching
     import bffile._biofile as biofile_mod
 
     old_memo_dir = biofile_mod.BIOFORMATS_MEMO_DIR
     try:
         biofile_mod.BIOFORMATS_MEMO_DIR = tmp_path
-        with BioFile(test_file, memoize=1) as bf:
+        with BioFile(any_file, memoize=1) as bf:
             # For pyramid files, use lower resolution to avoid 2GB limit
             num_resolutions = len(bf._core_meta_list[0])
             resolution = min(1, num_resolutions - 1)
@@ -207,14 +207,14 @@ def test_biofile_memoize(test_file: Path, tmp_path: Path) -> None:
         biofile_mod.BIOFORMATS_MEMO_DIR = old_memo_dir
 
 
-def test_biofile_dask_tiles(test_file: Path) -> None:
-    with BioFile(test_file, dask_tiles=True) as bf:
+def test_biofile_dask_tiles(any_file: Path) -> None:
+    with BioFile(any_file, dask_tiles=True) as bf:
         arr = bf.to_dask()
         assert arr is not None
 
 
-def test_biofile_dask_tiles_custom_size(test_file: Path) -> None:
-    with BioFile(test_file, dask_tiles=True, tile_size=(64, 64)) as bf:
+def test_biofile_dask_tiles_custom_size(any_file: Path) -> None:
+    with BioFile(any_file, dask_tiles=True, tile_size=(64, 64)) as bf:
         assert bf.tile_size == (64, 64)
         arr = bf.to_dask()
         assert arr is not None

@@ -57,7 +57,7 @@ DATA_FILES = sorted([x for x in TEST_DATA.iterdir() if x != URL_TXT])
 
 
 @pytest.fixture(scope="session", params=DATA_FILES, ids=lambda x: x.name)
-def test_file(request: pytest.FixtureRequest) -> Path:
+def any_file(request: pytest.FixtureRequest) -> Path:
     """
     Fixture to provide a test file from the data folder.
     """
@@ -70,11 +70,10 @@ def test_file(request: pytest.FixtureRequest) -> Path:
 
 def pytest_sessionstart() -> None:
     # https://jpype.readthedocs.io/en/latest/userguide.html#errors-reported-by-python-fault-handler
-    if os.name == "nt":
-        import faulthandler
+    import faulthandler
 
-        faulthandler.enable()
-        faulthandler.disable()
+    faulthandler.enable()
+    faulthandler.disable()
 
 
 # register pytest options
@@ -153,6 +152,9 @@ def pytest_runtest_makereport(
                 data = Path(__file__).parent / "data"
                 report.wasxfail = str(exc_value).replace(str(data), "")
             # Skip tests that hit Bio-Formats 2GB limit (pyramid files)
-            elif "Image plane too large" in exc_value or "Array size too large" in exc_value:
+            elif (
+                "Image plane too large" in exc_value
+                or "Array size too large" in exc_value
+            ):
                 report.outcome = "skipped"
                 report.wasxfail = "Pyramid file exceeds Bio-Formats 2GB limit (expected for full resolution)"
