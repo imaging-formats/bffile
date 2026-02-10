@@ -94,6 +94,11 @@ class LazyBioArray:
     def shape(self) -> tuple[int, ...]:
         """Array shape in (T, C, Z, Y, X) or (T, C, Z, Y, X, rgb) format."""
         return self._shape
+    
+    @property
+    def size(self) -> int:
+        """Number of elements in the array"""
+        return int(np.prod(self._shape))
 
     @property
     def dtype(self) -> np.dtype:
