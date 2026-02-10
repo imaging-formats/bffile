@@ -99,7 +99,7 @@ class LazyBioArray:
     @property
     def size(self) -> int:
         """Number of elements in the array"""
-        return int(math.prod(self._shape))
+        return math.prod(self._shape)
 
     @property
     def dtype(self) -> np.dtype:
