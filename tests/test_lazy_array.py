@@ -11,8 +11,10 @@ from bffile import BioFile, LazyBioArray
 def test_lazy_array_basic_properties(test_file):
     """Test basic properties of LazyBioArray."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
 
         # Check type
         assert isinstance(arr, LazyBioArray)
@@ -26,8 +28,10 @@ def test_lazy_array_basic_properties(test_file):
 def test_lazy_array_single_plane(test_file):
     """Test reading a single plane."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
 
         # Read single plane with integer indexing
         lazy_plane = arr[0, 0, 0]
@@ -40,9 +44,11 @@ def test_lazy_array_single_plane(test_file):
 def test_lazy_array_slice_dimensions(test_file):
     """Test slicing along different dimensions."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
-        meta = bf.core_meta(series=0)
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
+        meta = bf.core_meta(series=0, resolution=resolution)
         nt, nc, nz, _ny, _nx = meta.shape[:5]
 
         # Only test if we have multiple planes
@@ -68,9 +74,11 @@ def test_lazy_array_slice_dimensions(test_file):
 def test_lazy_array_subregion_yx(test_file):
     """Test reading a Y-X sub-region."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
-        meta = bf.core_meta(series=0)
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
+        meta = bf.core_meta(series=0, resolution=resolution)
         ny, nx = meta.shape.y, meta.shape.x
 
         # Only test if image is large enough
@@ -106,9 +114,11 @@ def test_lazy_array_subregion_yx(test_file):
 def test_lazy_array_mixed_indexing(test_file):
     """Test mixed integer and slice indexing."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
-        meta = bf.core_meta(series=0)
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
+        meta = bf.core_meta(series=0, resolution=resolution)
         nc, nz, ny, nx = meta.shape.c, meta.shape.z, meta.shape.y, meta.shape.x
 
         # Only test if dimensions allow
@@ -122,9 +132,11 @@ def test_lazy_array_mixed_indexing(test_file):
 def test_lazy_array_ellipsis(test_file):
     """Test ellipsis indexing."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
-        meta = bf.core_meta(series=0)
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
+        meta = bf.core_meta(series=0, resolution=resolution)
         ny, nx = meta.shape.y, meta.shape.x
 
         # Ellipsis expands to fill dimensions
@@ -151,8 +163,10 @@ def test_lazy_array_ellipsis(test_file):
 def test_lazy_array_full_slice(test_file):
     """Test reading with all-colon slicing."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
 
         # All dimensions fully sliced
         lazy_data = arr[:, :, :, :, :]
@@ -164,8 +178,10 @@ def test_lazy_array_full_slice(test_file):
 def test_lazy_array_numpy_protocol(test_file):
     """Test numpy array protocol via np.array()."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
 
         # Convert via __array__ protocol
         lazy_as_numpy = np.array(arr)
@@ -178,8 +194,10 @@ def test_lazy_array_numpy_protocol(test_file):
 def test_lazy_array_asarray(test_file):
     """Test np.asarray() compatibility."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
 
         # np.asarray should work
         lazy_as_array = np.asarray(arr)
@@ -190,8 +208,10 @@ def test_lazy_array_asarray(test_file):
 def test_lazy_array_with_numpy_functions(test_file):
     """Test that numpy functions work with lazy array."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
 
         # Test max projection along Z axis
         lazy_max = np.max(arr, axis=2)
@@ -203,9 +223,11 @@ def test_lazy_array_with_numpy_functions(test_file):
 def test_lazy_array_negative_indices(test_file):
     """Test negative indexing."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
-        meta = bf.core_meta(series=0)
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
+        meta = bf.core_meta(series=0, resolution=resolution)
         nt = meta.shape.t
 
         if nt > 1:
@@ -218,7 +240,9 @@ def test_lazy_array_negative_indices(test_file):
 def test_lazy_array_fancy_indexing_not_supported(test_file):
     """Test that fancy indexing raises NotImplementedError."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
 
         # List indexing not supported
         with pytest.raises(NotImplementedError, match="fancy indexing"):
@@ -232,7 +256,9 @@ def test_lazy_array_fancy_indexing_not_supported(test_file):
 def test_lazy_array_step_not_supported(test_file):
     """Test that step != 1 raises NotImplementedError."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
 
         # Step != 1 not supported
         with pytest.raises(NotImplementedError, match="step"):
@@ -242,7 +268,9 @@ def test_lazy_array_step_not_supported(test_file):
 def test_lazy_array_repr(test_file):
     """Test string representation."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
         repr_str = repr(arr)
 
         assert "LazyBioArray" in repr_str
@@ -254,11 +282,13 @@ def test_lazy_array_repr(test_file):
 def test_lazy_array_with_series(test_file):
     """Test lazy array with explicit series selection."""
     with BioFile(test_file) as bf:
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
         # If file has multiple series
         series_count = bf.java_reader().getSeriesCount()
         if series_count > 1:
-            arr = bf.as_array(series=0)
-            numpy_data = np.asarray(bf.as_array(series=0))
+            arr = bf.as_array(series=0, resolution=resolution)
+            numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
 
             assert arr.shape == numpy_data.shape
             assert np.array_equal(arr[0, 0, 0], numpy_data[0, 0, 0])
@@ -272,8 +302,10 @@ def test_lazy_array_memory_efficiency(test_file):
     reading the entire dataset.
     """
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        meta = bf.core_meta(series=0)
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        meta = bf.core_meta(series=0, resolution=resolution)
         ny, nx = meta.shape.y, meta.shape.x
 
         # Read small region
@@ -291,7 +323,9 @@ def test_lazy_array_memory_efficiency(test_file):
 def test_lazy_array_dimension_squeezing(test_file):
     """Test that integer indexing properly squeezes dimensions."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
 
         if arr.is_rgb:
             # 6D → 3D by fixing T, C, Z (leaves Y, X, RGB)
@@ -322,8 +356,10 @@ def test_lazy_array_dimension_squeezing(test_file):
 def test_lazy_array_partial_key(test_file):
     """Test indexing with fewer dimensions than array has."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
-        numpy_data = np.asarray(bf.as_array())
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
+        numpy_data = np.asarray(bf.as_array(series=0, resolution=resolution))
 
         # Should implicitly add full slices for missing dimensions
         lazy_data = arr[0]
@@ -336,7 +372,9 @@ def test_lazy_array_partial_key(test_file):
 def test_lazy_array_empty_slice(test_file):
     """Test behavior with empty slice ranges."""
     with BioFile(test_file) as bf:
-        arr = bf.as_array()
+        num_resolutions = len(bf._core_meta_list[0])
+        resolution = min(1, num_resolutions - 1)
+        arr = bf.as_array(series=0, resolution=resolution)
 
         # Slice that produces empty range
         empty = arr[0, 0, 0, 0:0, 0:0]
