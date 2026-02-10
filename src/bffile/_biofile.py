@@ -147,44 +147,31 @@ class BioFile:
         RuntimeError
             If file is not open
         """
-        if self.closed:  # Uses finalizer.alive under the hood
+        if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
-        if self._java_reader is None:  # Should never happen, but type safety
-            raise RuntimeError("Internal error: reader not initialized")
         return self._java_reader
 
-    @staticmethod
-    def _parse_core_metadata(
-        flat_list: list[CoreMetadata],
-    ) -> list[list[CoreMetadata]]:
+    def _get_core_metadata(self, reader: IFormatReader) -> list[list[CoreMetadata]]:
         """Parse flat CoreMetadata list into 2D structure.
 
         Bio-Formats returns metadata as a flat list where entries are organized
         as: [series0_res0, series0_res1, ..., series1_res0, series1_res1, ...].
         The first entry of each series has resolution_count set to indicate how
         many resolution levels that series has.
-
-        Parameters
-        ----------
-        flat_list : list[CoreMetadata]
-            Flat list from Bio-Formats getCoreMetadataList()
-
-        Returns
-        -------
-        list[list[CoreMetadata]]
-            2D structure: outer list = series, inner list = resolutions
         """
+
+        # Cache metadata in 2D structure: list[series][resolution]
+        # Bio-Formats returns a flat list where the first entry of each
+        # series has resolutionCount set. We parse this into 2D.
+        flat_list = [CoreMetadata.from_java(x) for x in reader.getCoreMetadataList()]
+
         result: list[list[CoreMetadata]] = []
         i = 0
         while i < len(flat_list):
             # First entry of each series has resolution_count
             resolution_count = flat_list[i].resolution_count
-            if resolution_count <= 0:
-                # Fallback: assume 1 resolution if not set
-                resolution_count = 1
             # Extract this series' resolutions
-            series_resolutions = flat_list[i : i + resolution_count]
-            result.append(series_resolutions)
+            result.append(flat_list[i : i + resolution_count])
             i += resolution_count
         return result
 
@@ -267,10 +254,7 @@ class BioFile:
                 self._java_reader.setOriginalMetadataPopulated(True)
 
             if self._options:
-                DynamicMetadataOptions = jimport(
-                    "loci.formats.in_.DynamicMetadataOptions"
-                )
-                mo = DynamicMetadataOptions()
+                mo = jimport("loci.formats.in_.DynamicMetadataOptions")()
                 for name, value in self._options.items():
                     mo.set(name, str(value))
                 self._java_reader.setMetadataOptions(mo)
@@ -279,14 +263,7 @@ class BioFile:
             try:
                 self._java_reader.setId(self._path)
 
-                # Cache metadata in 2D structure: list[series][resolution]
-                # Bio-Formats returns a flat list where the first entry of each
-                # series has resolutionCount set. We parse this into 2D.
-                flat_list = [
-                    CoreMetadata.from_java(x)
-                    for x in self._java_reader.getCoreMetadataList()
-                ]
-                self._core_meta_list = self._parse_core_metadata(flat_list)
+                self._core_meta_list = self._get_core_metadata(self._java_reader)
 
                 # Setup tile size if needed
                 if self.dask_tiles:
@@ -303,7 +280,7 @@ class BioFile:
                     self, _close_java_reader, self._java_reader
                 )
 
-            except Exception:
+            except Exception:  # pragma: no cover
                 self.close()
                 raise
 
@@ -423,12 +400,6 @@ class BioFile:
                 "Please install with `pip install bffile[dask]`"
             ) from e
 
-        if self._java_reader is None:
-            raise RuntimeError("File not open - call open() first")
-
-        # Get lazy array
-        lazy_arr = self.as_array(series=series, resolution=resolution)
-
         # Handle legacy dask_tiles behavior
         if chunks == "auto" and self.dask_tiles:
             meta = self.core_meta(series, resolution)
@@ -437,6 +408,7 @@ class BioFile:
             if nrgb > 1:
                 chunks = (*chunks, nrgb)  # type: ignore[assignment]
 
+        lazy_arr = self.as_array(series=series, resolution=resolution)
         return da.from_array(lazy_arr, chunks=chunks)  # type: ignore
 
     @property
@@ -470,7 +442,7 @@ class BioFile:
     @property
     def ome_metadata(self) -> OME:
         """Return OME object parsed by ome_types."""
-        if not (omx_xml := self.ome_xml):
+        if not (omx_xml := self.ome_xml):  # pragma: no cover (not sure if possible)
             return OME()
         xml = _utils.clean_ome_xml_for_known_issues(omx_xml)
         return OME.from_xml(xml)
@@ -584,21 +556,10 @@ class BioFile:
         reader is not thread-safe. For parallel processing, create separate
         BioFile instances per thread rather than sharing a single instance.
         """
-        if self.closed:
-            raise RuntimeError(
-                "Cannot read from closed file. "
-                "Call open() first or use a context manager: "
-                "with BioFile(...) as bf:"
-            )
+        reader = self.java_reader()
 
-        if self._java_reader is None or self._core_meta_list is None:
-            raise RuntimeError(
-                "Metadata not initialized - file may not be properly opened"
-            )
-
-        # Set series and resolution on Java reader
-        self._java_reader.setSeries(series)
-        self._java_reader.setResolution(resolution)
+        reader.setSeries(series)
+        reader.setResolution(resolution)
 
         # Get metadata for this series/resolution
         meta = self.core_meta(series, resolution)
@@ -608,12 +569,12 @@ class BioFile:
         x = x if x is not None else slice(0, shape.x)
 
         # Get bytes from bioformats
-        idx = self._java_reader.getIndex(z, c, t)
+        idx = reader.getIndex(z, c, t)
         ystart, ywidth = _utils.slice2width(y, shape.y)
         xstart, xwidth = _utils.slice2width(x, shape.x)
 
         # Read bytes using bioformats
-        java_buffer = self._java_reader.openBytes(idx, xstart, ystart, xwidth, ywidth)
+        java_buffer = reader.openBytes(idx, xstart, ystart, xwidth, ywidth)
         # Convert buffer to numpy array (zero-copy via memoryview)
         im = np.frombuffer(memoryview(java_buffer), meta.dtype)  # type: ignore
 
@@ -729,9 +690,8 @@ def _close_java_reader(java_reader: IFormatReader | None) -> None:
 
     For explicit cleanup, use the BioFile.close() method instead.
     """
-    if java_reader is None:
-        return
     # Only attempt close during normal operation (not shutdown)
-    if not sys.is_finalizing() and jpype.isJVMStarted():
-        with suppress(Exception):
-            java_reader.close()
+    if java_reader is None or sys.is_finalizing() or not jpype.isJVMStarted():
+        return  # pragma: no cover
+    with suppress(Exception):
+        java_reader.close()

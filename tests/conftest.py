@@ -68,6 +68,64 @@ def any_file(request: pytest.FixtureRequest) -> Path:
     return filename
 
 
+@pytest.fixture
+def simple_file() -> Path:
+    """Small RGB TIFF file for fast unit tests (7KB)."""
+    return TEST_DATA / "s_1_t_1_c_2_z_1_RGB.tiff"
+
+
+@pytest.fixture
+def multiseries_file() -> Path:
+    """ND2 file with 4 series for multi-series testing."""
+    return TEST_DATA / "ND2_dims_p4z5t3c2y32x32.nd2"
+
+
+@pytest.fixture
+def pyramid_file() -> Path:
+    """SVS file with multiple resolution levels."""
+    return TEST_DATA / "CMU-1-Small-Region.svs"
+
+
+@pytest.fixture
+def rgb_file() -> Path:
+    """RGB ND2 file for RGB dimension testing."""
+    return TEST_DATA / "ND2_dims_rgb.nd2"
+
+
+@pytest.fixture(
+    params=[
+        "s_1_t_1_c_2_z_1_RGB.tiff",
+        "ND2_dims_c2y32x32.nd2",
+        "s_1_t_1_c_1_z_1.ome.tiff",
+    ]
+)
+def small_test_file(request: pytest.FixtureRequest) -> Path:
+    """Parametrized fixture with small test files for format coverage."""
+    return TEST_DATA / request.param
+
+
+@pytest.fixture
+def opened_biofile(
+    request: pytest.FixtureRequest, simple_file: Path
+) -> Iterator[_biofile.BioFile]:
+    """Pre-opened BioFile instance for convenience in tests.
+
+    Uses simple_file by default, or parametrized with all files via --exhaustive.
+    """
+    # If parametrized (exhaustive mode), use the parameter
+    if hasattr(request, "param"):
+        file_path = request.param
+        if file_path.suffix in SKIP_EXTENSIONS:
+            pytest.skip(f"Skipping {file_path.suffix} files")
+    else:
+        file_path = simple_file
+
+    bf = _biofile.BioFile(file_path)
+    bf.open()
+    yield bf
+    bf.close()
+
+
 def pytest_sessionstart() -> None:
     # https://jpype.readthedocs.io/en/latest/userguide.html#errors-reported-by-python-fault-handler
     import faulthandler
@@ -89,6 +147,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         action="store_true",
         default=False,
         help="Run slow integration tests for Java constraints",
+    )
+    parser.addoption(
+        "--exhaustive",
+        action="store_true",
+        default=False,
+        help="Run exhaustive tests using all test files (slow)",
     )
 
 
@@ -133,6 +197,19 @@ def cache_dirs(request: pytest.FixtureRequest) -> Iterator[Path | None]:
         shutil.rmtree(tmp_path, ignore_errors=True)
 
     yield tmp_path
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Dynamically parametrize opened_biofile based on --exhaustive flag."""
+    if "opened_biofile" in metafunc.fixturenames:
+        if metafunc.config.getoption("--exhaustive"):
+            # Parametrize with all data files
+            metafunc.parametrize(
+                "opened_biofile",
+                DATA_FILES,
+                indirect=True,
+                ids=lambda x: x.name,
+            )
 
 
 @pytest.hookimpl(hookwrapper=True)

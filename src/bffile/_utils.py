@@ -17,17 +17,6 @@ if TYPE_CHECKING:
 log = logging.getLogger("bffile")
 
 
-class PhysicalPixelSizes(NamedTuple):
-    """NamedTuple with physical pixel sizes."""
-
-    z: float | None
-    y: float | None
-    x: float | None
-
-    def __repr__(self) -> str:
-        return f"PhysicalPixelSizes(z={self.z}, y={self.y}, x={self.x})"
-
-
 class OMEShape(NamedTuple):
     """NamedTuple with OME metadata shape."""
 
@@ -64,74 +53,105 @@ class DimensionNames:
     MosaicTile = "M"
 
 
-def get_coords_from_ome(
-    ome: OME, scene_index: int
-) -> Mapping[str, list[Any] | np.ndarray | Any]:
-    """
-    Process the OME metadata to retrieve the coordinate planes.
+# def get_coords_from_ome(
+#     ome: OME, scene_index: int
+# ) -> Mapping[str, list[Any] | np.ndarray | Any]:
+#     """
+#     Process the OME metadata to retrieve the coordinate planes.
 
-    Parameters
-    ----------
-    ome: OME
-        A constructed OME object to retrieve data from.
-    scene_index: int
-        The current operating scene index to pull metadata from.
+#     Parameters
+#     ----------
+#     ome: OME
+#         A constructed OME object to retrieve data from.
+#     scene_index: int
+#         The current operating scene index to pull metadata from.
 
-    Returns
-    -------
-    coords: Dict[str, Union[List[Any], Union[npt.ArrayLike, Any]]]
-        The coordinate planes / data for each dimension.
-    """
-    # Select scene
-    scene_meta = ome.images[scene_index]
+#     Returns
+#     -------
+#     coords: Dict[str, Union[List[Any], Union[npt.ArrayLike, Any]]]
+#         The coordinate planes / data for each dimension.
+#     """
+#     # Select scene
+#     scene_meta = ome.images[scene_index]
 
-    # Get coordinate planes
-    coords: dict[str, list[str] | np.ndarray] = {}
+#     # Get coordinate planes
+#     coords: dict[str, list[str] | np.ndarray] = {}
 
-    # Channels
-    # Channel name isn't required by OME spec, so try to use it but
-    # roll back to ID if not found
-    coords[DimensionNames.Channel] = [
-        channel.name if channel.name is not None else channel.id
-        for channel in scene_meta.pixels.channels
-    ]
+#     # Channels
+#     # Channel name isn't required by OME spec, so try to use it but
+#     # roll back to ID if not found
+#     coords[DimensionNames.Channel] = [
+#         channel.name if channel.name is not None else channel.id
+#         for channel in scene_meta.pixels.channels
+#     ]
 
-    # Time
-    # If global linear timescale we can np.linspace with metadata
-    if scene_meta.pixels.time_increment is not None:
-        coords[DimensionNames.Time] = generate_coord_array(
-            0, scene_meta.pixels.size_t, scene_meta.pixels.time_increment
-        )
-    # If non global linear timescale, we need to create an array of every plane
-    # time value
-    elif scene_meta.pixels.size_t > 1:
-        if len(scene_meta.pixels.planes) > 0:
-            t_index_to_delta_map = {
-                p.the_t: p.delta_t or 0 for p in scene_meta.pixels.planes
-            }
-            coords[DimensionNames.Time] = np.asarray(t_index_to_delta_map.values())
-        else:
-            coords[DimensionNames.Time] = np.linspace(
-                0,
-                scene_meta.pixels.size_t - 1,
-                scene_meta.pixels.size_t,
-            )
+#     # Time
+#     # If global linear timescale we can np.linspace with metadata
+#     if scene_meta.pixels.time_increment is not None:
+#         coords[DimensionNames.Time] = generate_coord_array(
+#             0, scene_meta.pixels.size_t, scene_meta.pixels.time_increment
+#         )
+#     # If non global linear timescale, we need to create an array of every plane
+#     # time value
+#     elif scene_meta.pixels.size_t > 1:
+#         if len(scene_meta.pixels.planes) > 0:
+#             t_index_to_delta_map = {
+#                 p.the_t: p.delta_t or 0 for p in scene_meta.pixels.planes
+#             }
+#             coords[DimensionNames.Time] = np.asarray(t_index_to_delta_map.values())
+#         else:
+#             coords[DimensionNames.Time] = np.linspace(
+#                 0,
+#                 scene_meta.pixels.size_t - 1,
+#                 scene_meta.pixels.size_t,
+#             )
 
-    # Handle Spatial Dimensions
-    if scene_meta.pixels.physical_size_z is not None:
-        coords[DimensionNames.SpatialZ] = generate_coord_array(
-            0, scene_meta.pixels.size_z, scene_meta.pixels.physical_size_z
-        )
-    if scene_meta.pixels.physical_size_y is not None:
-        coords[DimensionNames.SpatialY] = generate_coord_array(
-            0, scene_meta.pixels.size_y, scene_meta.pixels.physical_size_y
-        )
-    if scene_meta.pixels.physical_size_x is not None:
-        coords[DimensionNames.SpatialX] = generate_coord_array(
-            0, scene_meta.pixels.size_x, scene_meta.pixels.physical_size_x
-        )
+#     # Handle Spatial Dimensions
+#     if scene_meta.pixels.physical_size_z is not None:
+#         coords[DimensionNames.SpatialZ] = generate_coord_array(
+#             0, scene_meta.pixels.size_z, scene_meta.pixels.physical_size_z
+#         )
+#     if scene_meta.pixels.physical_size_y is not None:
+#         coords[DimensionNames.SpatialY] = generate_coord_array(
+#             0, scene_meta.pixels.size_y, scene_meta.pixels.physical_size_y
+#         )
+#     if scene_meta.pixels.physical_size_x is not None:
+#         coords[DimensionNames.SpatialX] = generate_coord_array(
+#             0, scene_meta.pixels.size_x, scene_meta.pixels.physical_size_x
+#         )
 
-    return coords
+#     return coords
+
+
+# def generate_coord_array(
+#     start: int | float, stop: int | float, step_size: int | float
+# ) -> np.ndarray:
+#     """
+#     Generate an np.ndarray for coordinate values.
+
+#     Parameters
+#     ----------
+#     start: Union[int, float]
+#         The start value.
+#     stop: Union[int, float]
+#         The stop value.
+#     step_size: Union[int, float]
+#         How large each step should be.
+
+#     Returns
+#     -------
+#     coords: np.ndarray
+#         The coordinate array.
+
+#     Notes
+#     -----
+#     In general, we have learned that floating point math is hard....
+#     This block of code used to use `np.arange` with floats as parameters and
+#     it was causing errors. To solve, we generate the range with ints and then
+#     multiply by a float across the entire range to get the proper coords.
+#     See: https://github.com/AllenCellModeling/aicsimageio/issues/249
+#     """
+#     return np.arange(start, stop) * step_size
 
 
 def clean_ome_xml_for_known_issues(xml: str) -> str:
@@ -175,8 +195,11 @@ def clean_ome_xml_for_known_issues(xml: str) -> str:
     namespace_matches = re.match(r"\{.*\}", root.tag)
     if namespace_matches is not None:
         namespace = namespace_matches.group(0)
-    else:
-        raise ValueError("XML does not contain a namespace")
+    else:  # pragma: no cover
+        raise ValueError(
+            "XML does not contain a namespace, "
+            "please report this issue with the file that caused it."
+        )
 
     # Fix MicroManager Instrument and Detector
     ome_instrument_id = ""
@@ -435,21 +458,32 @@ def clean_ome_xml_for_known_issues(xml: str) -> str:
     return xml
 
 
-def physical_pixel_sizes(ome: OME, scene: int = 0) -> PhysicalPixelSizes:
-    """
-    Returns
-    -------
-    sizes: PhysicalPixelSizes
-        Using available metadata, the floats representing physical pixel sizes for
-        dimensions Z, Y, and X.
+# class PhysicalPixelSizes(NamedTuple):
+#     """NamedTuple with physical pixel sizes."""
 
-    Notes
-    -----
-    We currently do not handle unit attachment to these values. Please see the file
-    metadata for unit information.
-    """
-    p = ome.images[scene].pixels
-    return PhysicalPixelSizes(p.physical_size_z, p.physical_size_y, p.physical_size_x)
+#     z: float | None
+#     y: float | None
+#     x: float | None
+
+#     def __repr__(self) -> str:
+#         return f"PhysicalPixelSizes(z={self.z}, y={self.y}, x={self.x})"
+
+
+# def physical_pixel_sizes(ome: OME, scene: int = 0) -> PhysicalPixelSizes:
+#     """
+#     Returns
+#     -------
+#     sizes: PhysicalPixelSizes
+#         Using available metadata, the floats representing physical pixel sizes for
+#         dimensions Z, Y, and X.
+
+#     Notes
+#     -----
+#     We currently do not handle unit attachment to these values. Please see the file
+#     metadata for unit information.
+#     """
+#     p = ome.images[scene].pixels
+#     return PhysicalPixelSizes(p.physical_size_z, p.physical_size_y, p.physical_size_x)
 
 
 def generate_ome_image_id(image_id: str | int) -> str:
@@ -535,37 +569,6 @@ def generate_ome_detector_id(detector_id: str | int) -> str:
     return f"Detector:{detector_id}"
 
 
-def generate_coord_array(
-    start: int | float, stop: int | float, step_size: int | float
-) -> np.ndarray:
-    """
-    Generate an np.ndarray for coordinate values.
-
-    Parameters
-    ----------
-    start: Union[int, float]
-        The start value.
-    stop: Union[int, float]
-        The stop value.
-    step_size: Union[int, float]
-        How large each step should be.
-
-    Returns
-    -------
-    coords: np.ndarray
-        The coordinate array.
-
-    Notes
-    -----
-    In general, we have learned that floating point math is hard....
-    This block of code used to use `np.arange` with floats as parameters and
-    it was causing errors. To solve, we generate the range with ints and then
-    multiply by a float across the entire range to get the proper coords.
-    See: https://github.com/AllenCellModeling/aicsimageio/issues/249
-    """
-    return np.arange(start, stop) * step_size
-
-
 def _chunk_by_tile_size(n_px: int, tile_length: int) -> tuple[int, ...]:
     n_splits = n_px / tile_length
     n_full_tiles = np.floor(n_splits)
@@ -594,14 +597,14 @@ def get_dask_tile_chunks(
     return ((1,) * nt, (1,) * nc, (1,) * nz, y_tiling_chunks, x_tiling_chunks)
 
 
-def axis_id_to_slice(axis_id: int, tile_length: int, n_px: int) -> slice:
-    """Take the axis_id from a dask block_id and create the corresponding
-    tile slice, taking into account edge tiles.
-    """
-    if (axis_id * tile_length) + tile_length <= n_px:
-        return slice(axis_id * tile_length, (axis_id * tile_length) + tile_length)
-    else:
-        return slice(axis_id * tile_length, n_px)
+# def axis_id_to_slice(axis_id: int, tile_length: int, n_px: int) -> slice:
+#     """Take the axis_id from a dask block_id and create the corresponding
+#     tile slice, taking into account edge tiles.
+#     """
+#     if (axis_id * tile_length) + tile_length <= n_px:
+#         return slice(axis_id * tile_length, (axis_id * tile_length) + tile_length)
+#     else:
+#         return slice(axis_id * tile_length, n_px)
 
 
 def slice2width(slc: slice, length: int) -> tuple[int, int]:
