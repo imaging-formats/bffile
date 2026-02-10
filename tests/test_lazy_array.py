@@ -97,10 +97,11 @@ def test_index_out_of_bounds(opened_biofile: BioFile) -> None:
         arr[1000, 0, 0]
 
 
-def test_shape_dtype_ndim_properties(simple_file: Path) -> None:
+def test_shape_size_dtype_ndim_properties(simple_file: Path) -> None:
     with BioFile(simple_file) as bf:
         arr = bf.as_array()
         assert isinstance(arr.shape, tuple)
+        assert isinstance(arr.size, int)
         assert isinstance(arr.dtype, np.dtype)
         assert isinstance(arr.ndim, int)
         assert arr.ndim == len(arr.shape)

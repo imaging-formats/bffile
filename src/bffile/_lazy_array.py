@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -88,6 +89,11 @@ class LazyBioArray:
     def shape(self) -> tuple[int, ...]:
         """Array shape in (T, C, Z, Y, X) or (T, C, Z, Y, X, rgb) format."""
         return self._shape
+    
+    @property
+    def size(self) -> int:
+        """Number of elements in the array"""
+        return math.prod(self._shape)
 
     @property
     def dtype(self) -> np.dtype:
