@@ -83,6 +83,7 @@ jobs:
 
       - name: Get test data cache key
         id: cache-key
+        shell: bash
         run: |
           MANIFEST_HASH=$(curl -sL https://pub-2ac5a4b342a7472da9d44847263e1a56.r2.dev/manifest.json | sha256sum | cut -d' ' -f1)
           echo "hash=${MANIFEST_HASH}" >> "$GITHUB_OUTPUT"
