@@ -37,7 +37,7 @@ def fetch_from_r2() -> list[Path]:
 
         with ThreadPoolExecutor(max_workers=10) as pool:
             for f in as_completed(pool.submit(download_file, f) for f in to_download):
-                print(f"  ↓ {f.result()}")
+                print(f"  -> {f.result()}")
     else:
         print("Already up to date.")
 
