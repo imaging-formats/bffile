@@ -62,7 +62,7 @@ if _BFDIR:
 # Configure maximum Java byte array size from environment
 # Default: 2^31 - 1 (Java's maximum signed integer)
 # Can be reduced via BIOFORMATS_MAX_JAVA_BYTES for more conservative tiling
-MAX_JAVA_ARRAY_SIZE: int = 2**31 - 1
+MAX_JAVA_ARRAY_SIZE: int = 2**31 - 8
 if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):
     try:
         MAX_JAVA_ARRAY_SIZE = int(_max_bytes)
