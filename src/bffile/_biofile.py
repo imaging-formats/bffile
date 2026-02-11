@@ -693,11 +693,11 @@ class BioFile:
         for y0 in range(0, height, tile_height):
             h = min(tile_height, height - y0)
 
-            reader.openBytes(plane_idx, tile_buffer, x_start, y_start + y0, width, h)
+            reader.openBytes(plane_idx, tile_buffer, x_start, y_start + y0, width, h)  # pyright: ignore[reportArgumentType]
 
             # View tile data (count is elements, not bytes)
             tile_data = np.frombuffer(
-                memoryview(tile_buffer),
+                memoryview(tile_buffer),  # pyright: ignore[reportArgumentType]
                 dtype=meta.dtype,
                 count=h * width * shape.rgb,
             )

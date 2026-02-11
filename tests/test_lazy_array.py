@@ -301,10 +301,14 @@ def test_tiled_read_subregion(simple_file: Path) -> None:
         height, width = 10, 10
 
         # Direct read of subregion
-        direct = bf._read_plane_direct(reader, meta, 0, 0, 0, y_start, x_start, height, width)
+        direct = bf._read_plane_direct(
+            reader, meta, 0, 0, 0, y_start, x_start, height, width
+        )
 
         # Tiled read of subregion
-        tiled = bf._read_plane_tiled(reader, meta, 0, 0, 0, y_start, x_start, height, width)
+        tiled = bf._read_plane_tiled(
+            reader, meta, 0, 0, 0, y_start, x_start, height, width
+        )
 
         # Results should be identical
         np.testing.assert_array_equal(direct, tiled)
