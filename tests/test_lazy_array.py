@@ -249,7 +249,7 @@ def test_tile_height_calculation(simple_file: Path) -> None:
         reader = bf.java_reader()
         reader.setSeries(0)
         reader.setResolution(0)
-        meta = bf.core_meta(0, 0)
+        meta = bf.core_metadata(0, 0)
 
         # Test with full width
         tile_height = bf._calculate_tile_height(meta, meta.shape.x)
@@ -270,7 +270,7 @@ def test_tiled_vs_direct_read_consistency(simple_file: Path) -> None:
         reader = bf.java_reader()
         reader.setSeries(0)
         reader.setResolution(0)
-        meta = bf.core_meta(0, 0)
+        meta = bf.core_metadata(0, 0)
 
         height, width = meta.shape.y, meta.shape.x
 
@@ -290,7 +290,7 @@ def test_tiled_read_subregion(simple_file: Path) -> None:
         reader = bf.java_reader()
         reader.setSeries(0)
         reader.setResolution(0)
-        meta = bf.core_meta(0, 0)
+        meta = bf.core_metadata(0, 0)
 
         # Skip if image too small
         if meta.shape.y < 20 or meta.shape.x < 20:
