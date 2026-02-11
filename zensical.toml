@@ -6,6 +6,11 @@ repo_name = "tlambert03/bffile"
 repo_url = "https://github.com/tlambert03/bffile"
 copyright = ""
 
+nav = [
+    { Home = "index.md" },
+    { Usage = "usage.md" },
+    { "API Reference" = "api.md" },
+]
 
 [project.theme]
 icon.logo = "lucide/file-box"
@@ -49,6 +54,7 @@ toggle.name = "Switch to light mode"
 [project.plugins.mkdocstrings.handlers.python]
 inventories = [
     "https://docs.python.org/3/objects.inv",
+    "https://ome-types.readthedocs.io/en/latest//objects.inv",
 ]
 paths = ["src"]
 
