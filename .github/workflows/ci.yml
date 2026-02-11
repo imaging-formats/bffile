@@ -81,6 +81,23 @@ jobs:
           UV_RESOLUTION: ${{ matrix.resolution || 'highest' }}
           UV_PRERELEASE: ${{ github.event_name == 'schedule' && 'allow' || 'if-necessary-or-explicit' }}
 
+      - name: Get test data cache key
+        id: cache-key
+        run: |
+          MANIFEST_HASH=$(curl -sL https://pub-2ac5a4b342a7472da9d44847263e1a56.r2.dev/manifest.json | sha256sum | cut -d' ' -f1)
+          echo "hash=${MANIFEST_HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache test data
+        uses: actions/cache@v4
+        id: cache-test-data
+        with:
+          path: tests/data
+          key: test-data-${{ steps.cache-key.outputs.hash }}
+
+      - name: Fetch test data
+        if: steps.cache-test-data.outputs.cache-hit != 'true'
+        run: uv run scripts/fetch_test_data.py
+
       - name: Test
         run: uv run --no-sync coverage run -p -m pytest -v -p no:faulthandler
         env:
