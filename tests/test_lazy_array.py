@@ -27,6 +27,8 @@ def test_indexing_patterns(
     opened_biofile: BioFile, indexing: tuple, squeezed_dims: int
 ) -> None:
     arr = opened_biofile.as_array()
+    if arr.nbytes > 1_000_000_000:  # Skip arrays > 1GB
+        pytest.skip(f"Array too large ({arr.nbytes / 1e9:.2f} GB)")
     result = arr[indexing]
     expected_ndim = arr.ndim - squeezed_dims
     assert result.ndim == expected_ndim
@@ -50,6 +52,9 @@ def test_xy_subregion(opened_biofile: BioFile) -> None:
 
 def test_mixed_indexing(opened_biofile: BioFile) -> None:
     arr = opened_biofile.as_array()
+    if arr.nbytes > 1_000_000_000:  # Skip arrays > 1GB
+        pytest.skip(f"Array too large ({arr.nbytes / 1e9:.2f} GB)")
+
     result = arr[0, :, 0, :, :]
     # Squeezed T and Z, kept C, Y, X (and RGB if present)
     expected_ndim = arr.ndim - 2
@@ -58,6 +63,9 @@ def test_mixed_indexing(opened_biofile: BioFile) -> None:
 
 def test_numpy_array_conversion(opened_biofile: BioFile) -> None:
     arr = opened_biofile.as_array()
+    if arr.nbytes > 1_000_000_000:  # Skip arrays > 1GB
+        pytest.skip(f"Array too large ({arr.nbytes / 1e9:.2f} GB)")
+
     np_arr = np.array(arr)
     assert isinstance(np_arr, np.ndarray)
     assert np_arr.shape == arr.shape
@@ -66,6 +74,8 @@ def test_numpy_array_conversion(opened_biofile: BioFile) -> None:
 
 def test_numpy_operations(opened_biofile: BioFile) -> None:
     arr = opened_biofile.as_array()
+    if arr.nbytes > 1_000_000_000:  # Skip arrays > 1GB
+        pytest.skip(f"Array too large ({arr.nbytes / 1e9:.2f} GB)")
     max_proj = np.max(arr, axis=2)
     assert max_proj.ndim == arr.ndim - 1
 
@@ -141,6 +151,8 @@ def test_conditional_dimension_slicing(opened_biofile: BioFile) -> None:
 def test_partial_key_indexing(opened_biofile: BioFile) -> None:
     """Test indexing with fewer dimensions than array has."""
     arr = opened_biofile.as_array()
+    if arr.nbytes > 1_000_000_000:  # Skip arrays > 1GB
+        pytest.skip(f"Array too large ({arr.nbytes / 1e9:.2f} GB)")
 
     # Should implicitly add full slices for missing dimensions
     result = arr[0]

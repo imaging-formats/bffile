@@ -43,6 +43,10 @@ class LazyBioArray:
         Data type of array elements
     ndim : int
         Number of dimensions (5 for grayscale, 6 for RGB)
+    size : int
+        Number of elements in the array
+    nbytes : int
+        Total bytes consumed by the array elements
 
     Examples
     --------
@@ -94,6 +98,11 @@ class LazyBioArray:
     def size(self) -> int:
         """Number of elements in the array"""
         return math.prod(self._shape)
+
+    @property
+    def nbytes(self) -> int:
+        """Total bytes consumed by the array elements."""
+        return self.size * self.dtype.itemsize
 
     @property
     def dtype(self) -> np.dtype:
