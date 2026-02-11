@@ -11,6 +11,7 @@ import scyjava
 from ._java_stuff import start_jvm
 
 if TYPE_CHECKING:
+    import java.lang
     from loci.common.services import ServiceFactory
     from loci.formats import FormatTools, ImageReader, Memoizer, Modulo
     from loci.formats.in_ import DynamicMetadataOptions
@@ -73,6 +74,10 @@ class _CoreMetadata:
 # ------------------------ jimport casts ------------------------------
 
 
+@overload
+def jimport(
+    classname: Literal["java.lang.Runtime"],
+) -> type[java.lang.Runtime]: ...
 @overload
 def jimport(
     classname: Literal["ome.units.quantity.Quantity"],

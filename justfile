@@ -7,7 +7,8 @@ build-stubs:
 
 # run tests quickly with coverage
 test:
-    uv run pytest --allow-cache -n 6 --cov
+    uv run pytest --allow-cache -n 6 --cov --cov-report=xml --cov-report=term-missing
+    diff-cover coverage.xml --compare-branch=upstream/main
 
 # run linting and type checking
 check:

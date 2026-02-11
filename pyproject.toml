@@ -7,6 +7,10 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 source = "vcs"
 
+# https://hatch.pypa.io/latest/config/build/#build-targets
+[tool.hatch.build.targets.sdist]
+exclude = ["typings", ".autoenv.zsh", "codecov.yml", "CLAUDE.md"]
+
 # https://peps.python.org/pep-0621/
 [project]
 name = "bffile"
@@ -39,7 +43,7 @@ homepage = "https://github.com/tlambert03/bffile"
 repository = "https://github.com/tlambert03/bffile"
 
 [project.optional-dependencies]
-dask = ["dask[array]>=2024.11.0", "resource-backed-dask-array>=0.1.0"]
+dask = ["dask[array]>=2024.11.0"]
 
 [dependency-groups]
 test = [
@@ -50,7 +54,7 @@ test = [
 ]
 dev = [
     { include-group = "test" },
-    "cmap>=0.7.1",
+    "diff-cover>=10.2.0",
     "ipython>=8.18.1",
     "pdbpp>=0.11.6 ; sys_platform != 'win32'",
     "prek>=0.2.19",
