@@ -39,7 +39,7 @@ homepage = "https://github.com/tlambert03/bffile"
 repository = "https://github.com/tlambert03/bffile"
 
 [project.optional-dependencies]
-dask = ["dask[array]>=2024.11.0", "resource-backed-dask-array>=0.1.0"]
+dask = ["dask[array]>=2024.11.0"]
 
 [dependency-groups]
 test = [
