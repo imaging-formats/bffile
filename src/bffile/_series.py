@@ -162,4 +162,4 @@ class Series:
         """
         reader = self._biofile.java_reader()
         reader.setSeries(self._index)
-        return [str(f) for f in reader.getSeriesUsedFiles(metadata_only)]
+        return [str(f) for f in reader.getSeriesUsedFiles(metadata_only) or ()]

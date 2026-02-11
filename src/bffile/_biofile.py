@@ -548,7 +548,7 @@ class BioFile(Sequence[Series]):
             If True, only return files that do not contain pixel data (e.g., metadata,
             companion files, etc...), by default `False`.
         """
-        return [str(x) for x in self.java_reader().getUsedFiles(metadata_only)]
+        return [str(x) for x in self.java_reader().getUsedFiles(metadata_only) or ()]
 
     def lookup_table(self, series: int = 0) -> np.ndarray | None:
         """Return the color lookup table for an indexed-color series.

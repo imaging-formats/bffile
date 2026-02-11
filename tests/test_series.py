@@ -144,3 +144,36 @@ def test_series_repr(multiseries_file: Path) -> None:
         assert "index=" in r
         assert "shape=" in r
         assert "dtype=" in r
+
+
+def test_getitem_slice(multiseries_file: Path) -> None:
+    """Test BioFile.__getitem__ with slices."""
+    with BioFile(multiseries_file) as bf:
+        # Test basic slice
+        series_list = bf[0:2]
+        assert isinstance(series_list, list)
+        assert len(series_list) == 2
+        assert all(isinstance(s, Series) for s in series_list)
+        assert series_list[0].index == 0
+        assert series_list[1].index == 1
+
+        # Test slice with step
+        stepped = bf[0::2]
+        assert len(stepped) == 2
+        assert stepped[0].index == 0
+        assert stepped[1].index == 2
+
+        # Test full slice
+        all_series = bf[:]
+        assert len(all_series) == len(bf)
+
+
+def test_series_used_files(multiseries_file: Path) -> None:
+    """Test Series.used_files method."""
+    with BioFile(multiseries_file) as bf:
+        files = bf[0].used_files()
+        assert isinstance(files, list)
+        assert len(files) >= 1
+
+        meta_files = bf[0].used_files(metadata_only=True)
+        assert isinstance(meta_files, list)

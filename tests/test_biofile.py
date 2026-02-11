@@ -176,3 +176,34 @@ def test_imread(simple_file: Path) -> None:
     arr = imread(simple_file)
     assert isinstance(arr, np.ndarray)
     assert arr.ndim == 5
+
+
+def test_global_metadata(multiseries_file: Path) -> None:
+    with BioFile(multiseries_file) as bf:
+        meta = bf.global_metadata()
+        assert isinstance(meta, dict)
+        assert meta
+
+
+def test_used_files(any_file: Path) -> None:
+    with BioFile(any_file) as bf:
+        # Test both with and without metadata_only flag
+        files = bf.used_files()
+        assert files
+        assert any(bf.filename in f for f in files)
+
+        meta_files = bf.used_files(metadata_only=True)
+        assert isinstance(meta_files, list)
+
+
+def test_lookup_table(any_file: Path) -> None:
+    """Test lookup_table method for various file types."""
+    with BioFile(any_file) as bf:
+        for series in range(len(bf)):
+            lut = bf.lookup_table(series=series)
+            if lut is not None:
+                assert isinstance(lut, np.ndarray)
+                assert lut.ndim == 2
+                assert lut.shape[0] >= 1  # At least one channel
+                assert lut.shape[1] >= 1  # At least one value
+                assert lut.dtype in (np.uint8, np.uint16)
