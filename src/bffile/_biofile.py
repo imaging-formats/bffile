@@ -746,7 +746,7 @@ class BioFile:
         buffer_size = tile_height * row_bytes
 
         # Allocate reusable Java buffer ONCE
-        tile_buffer = jpype.JArray(jpype.JByte)(buffer_size)
+        tile_buffer = jpype.JArray(jpype.JByte)(buffer_size)  # pyright: ignore[reportCallIssue]
 
         # Get plane index
         plane_idx = reader.getIndex(z, c, t)
