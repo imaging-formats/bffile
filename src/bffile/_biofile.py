@@ -510,6 +510,10 @@ class BioFile(Sequence[Series]):
             raise RuntimeError("File not open - call open() first")
         return len(self._core_meta_list)
 
+    def series_count(self) -> int:
+        """Return the number of series in the file."""
+        return len(self)
+
     @overload
     def __getitem__(self, index: int) -> Series: ...
     @overload

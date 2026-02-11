@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 def test_len(multiseries_file: Path) -> None:
     with BioFile(multiseries_file) as bf:
-        assert len(bf) == 4
+        assert len(bf) == bf.series_count() == 4
 
 
 def test_len_single_series(simple_file: Path) -> None:
