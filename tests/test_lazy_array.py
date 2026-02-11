@@ -255,9 +255,7 @@ def test_tile_height_calculation(simple_file: Path) -> None:
         tile_height = bf._calculate_tile_height(meta, meta.shape.x)
 
         # Calculate bytes for the tile
-        from bffile._biofile import _calculate_plane_bytes
-
-        tile_bytes = _calculate_plane_bytes(meta, tile_height, meta.shape.x)
+        tile_bytes = tile_height * meta.shape.x * meta.dtype.itemsize * meta.shape.rgb
 
         # Should be under Java's limit
         assert tile_bytes <= 2**31 - 1
@@ -274,11 +272,13 @@ def test_tiled_vs_direct_read_consistency(simple_file: Path) -> None:
         reader.setResolution(0)
         meta = bf.core_meta(0, 0)
 
+        height, width = meta.shape.y, meta.shape.x
+
         # Direct read
-        direct = bf._read_plane_direct(reader, meta, 0, 0, 0, slice(None), slice(None))
+        direct = bf._read_plane_direct(reader, meta, 0, 0, 0, 0, 0, height, width)
 
         # Tiled read
-        tiled = bf._read_plane_tiled(reader, meta, 0, 0, 0, slice(None), slice(None))
+        tiled = bf._read_plane_tiled(reader, meta, 0, 0, 0, 0, 0, height, width)
 
         # Results should be identical
         np.testing.assert_array_equal(direct, tiled)
@@ -297,14 +297,14 @@ def test_tiled_read_subregion(simple_file: Path) -> None:
             pytest.skip("Image too small for subregion test")
 
         # Define a subregion
-        y_slice = slice(5, 15)
-        x_slice = slice(10, 20)
+        y_start, x_start = 5, 10
+        height, width = 10, 10
 
         # Direct read of subregion
-        direct = bf._read_plane_direct(reader, meta, 0, 0, 0, y_slice, x_slice)
+        direct = bf._read_plane_direct(reader, meta, 0, 0, 0, y_start, x_start, height, width)
 
         # Tiled read of subregion
-        tiled = bf._read_plane_tiled(reader, meta, 0, 0, 0, y_slice, x_slice)
+        tiled = bf._read_plane_tiled(reader, meta, 0, 0, 0, y_start, x_start, height, width)
 
         # Results should be identical
         np.testing.assert_array_equal(direct, tiled)

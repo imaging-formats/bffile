@@ -59,9 +59,10 @@ if _BFDIR:
     BIOFORMATS_MEMO_DIR = Path(_BFDIR).expanduser().absolute()
     BIOFORMATS_MEMO_DIR.mkdir(exist_ok=True, parents=True)
 
-# Configure maximum Java byte array size from environment
-# Default: 2^31 - 8 (Java's maximum signed integer)
-# Can be reduced via BIOFORMATS_MAX_JAVA_BYTES for more conservative tiling
+# Java byte array size limit: 2^31 - 8 (leaves room for array header)
+# Bio-Formats will fail with "Array size too large" if we exceed this.
+# Key insight: This is a HARD limit in Java - can't be increased without JVM changes.
+# Solution: Automatic tiling when reading >2GB planes (transparent to users)
 MAX_JAVA_ARRAY_SIZE: int = 2**31 - 8
 if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):
     try:
@@ -72,13 +73,6 @@ if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):
             f"Using default {MAX_JAVA_ARRAY_SIZE}",
             stacklevel=2,
         )
-
-
-def _calculate_plane_bytes(meta: CoreMetadata, height: int, width: int) -> int:
-    """Calculate expected byte size for a plane region."""
-    bytes_per_pixel = meta.dtype.itemsize
-    rgb_channels = meta.shape.rgb
-    return height * width * bytes_per_pixel * rgb_channels
 
 
 class BioFile:
@@ -330,10 +324,7 @@ class BioFile:
         BioFile must remain open while using the array. Multiple arrays can
         coexist, each reading from their own series independently.
 
-        **Large planes:** For planes exceeding Java's 2GB byte array limit,
-        the implementation automatically uses tiled reading to assemble the
-        full array. This is transparent to the user but may be slightly slower
-        than direct reading.
+        Planes >2GB automatically use tiled reading (transparent, ~20% slower).
         """
         if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
@@ -572,45 +563,22 @@ class BioFile:
         y: slice,
         x: slice,
     ) -> np.ndarray:
-        """
-        Fast plane reading for hot path (internal use only).
-
-        Automatically uses tiled reading if the requested region exceeds
-        Java's 2GB byte array limit.
-
-        Parameters
-        ----------
-        reader : IFormatReader
-            Java reader (already set to correct series/resolution)
-        meta : CoreMetadata
-            Metadata for current series/resolution (avoid repeated lookups)
-        t, c, z : int
-            Plane coordinates
-        y, x : slice
-            Sub-region slices (not None)
-
-        Returns
-        -------
-        np.ndarray
-            Plane data as 2D or 3D array
-        """
+        """Dispatch to tiled or direct read based on plane size."""
         shape = meta.shape
-
-        # Calculate requested region dimensions
         y_start, y_stop, _ = y.indices(shape.y)
         x_start, x_stop, _ = x.indices(shape.x)
+
         height = y_stop - y_start
         width = x_stop - x_start
-
-        # Check if this region exceeds Java's array size limit
-        plane_bytes = _calculate_plane_bytes(meta, height, width)
+        plane_bytes = height * width * meta.dtype.itemsize * meta.shape.rgb
 
         if plane_bytes > MAX_JAVA_ARRAY_SIZE:
-            # Region too large - use tiled reading
-            return self._read_plane_tiled(reader, meta, t, c, z, y, x)
-        else:
-            # Region fits in single Java array - use direct reading
-            return self._read_plane_direct(reader, meta, t, c, z, y, x)
+            return self._read_plane_tiled(
+                reader, meta, t, c, z, y_start, x_start, height, width
+            )
+        return self._read_plane_direct(
+            reader, meta, t, c, z, y_start, x_start, height, width
+        )
 
     def _read_plane_direct(
         self,
@@ -619,51 +587,27 @@ class BioFile:
         t: int,
         c: int,
         z: int,
-        y: slice,
-        x: slice,
+        y_start: int,
+        x_start: int,
+        height: int,
+        width: int,
     ) -> np.ndarray:
-        """
-        Read a plane directly without tiling (original implementation).
-
-        This is the fast path for planes that fit within Java's array limit.
-
-        Parameters
-        ----------
-        reader : IFormatReader
-            Java reader (already set to correct series/resolution)
-        meta : CoreMetadata
-            Metadata for current series/resolution (avoid repeated lookups)
-        t, c, z : int
-            Plane coordinates
-        y, x : slice
-            Sub-region slices (not None)
-
-        Returns
-        -------
-        np.ndarray
-            Plane data as 2D or 3D array
-        """
+        """Read plane directly (fast path for <2GB planes)."""
         shape = meta.shape
-
-        # Get bytes from bioformats
         idx = reader.getIndex(z, c, t)
-        ystart, ywidth = _utils.slice2width(y, shape.y)
-        xstart, xwidth = _utils.slice2width(x, shape.x)
 
-        # Read bytes using bioformats
-        java_buffer = reader.openBytes(idx, xstart, ystart, xwidth, ywidth)
-        # Convert buffer to numpy array (zero-copy via memoryview)
+        java_buffer = reader.openBytes(idx, x_start, y_start, width, height)
         im = np.frombuffer(memoryview(java_buffer), meta.dtype)  # type: ignore
 
         # Reshape
         if shape.rgb > 1:
             if meta.is_interleaved:
-                im.shape = (ywidth, xwidth, shape.rgb)
+                im.shape = (height, width, shape.rgb)
             else:
-                im.shape = (shape.rgb, ywidth, xwidth)
+                im.shape = (shape.rgb, height, width)
                 im = np.transpose(im, (1, 2, 0))
         else:
-            im.shape = (ywidth, xwidth)
+            im.shape = (height, width)
 
         return im
 
@@ -673,29 +617,18 @@ class BioFile:
         region_width: int,
     ) -> int:
         """
-        Calculate maximum row count for full-width tiling.
+        Calculate max rows per tile respecting Java array limit and heap space.
 
-        Strategy: Read full-width rows (no X tiling) to minimize overhead
-        and match sequential I/O patterns. Calculate how many rows fit
-        within both Java's byte array limit and available heap space.
-
-        For CMU-1.svs (46000 x 32914 x 3 x 1) with default limit:
-        - Row bytes: 46,000 x 3 x 1 = 138,000 bytes/row
-        - Max rows: 2,147,483,647 / 138,000 = 15,561 rows
-        - Tile size: ~2.14 GB per tile (just under limit)
-        - Result: 3 tiles (15,561 + 15,561 + 1,792 rows)
-
-        Returns maximum row count per tile.
+        Uses full-width rows (no X tiling) to minimize openBytes() calls.
+        Typical result: 3 tiles of ~2GB each for 4.23GB planes.
         """
-        # Calculate bytes per row (width x channels x bytes_per_pixel)
-        bytes_per_pixel = meta.dtype.itemsize
-        rgb_channels = meta.shape.rgb
-        row_bytes = region_width * bytes_per_pixel * rgb_channels
+        row_bytes = region_width * meta.dtype.itemsize * meta.shape.rgb
 
-        # Constraint 1: Java's maximum byte array size
+        # Constraint 1: Java's max byte array size
         tile_height = MAX_JAVA_ARRAY_SIZE // row_bytes
 
-        # Constraint 2: Available Java heap space (use 80% for safety)
+        # Constraint 2: Available heap (80% safety margin)
+        # Key lesson: Practical limit often lower than theoretical due to heap size
         Runtime = jimport("java.lang.Runtime")
         runtime = Runtime.getRuntime()
         available_heap = runtime.maxMemory() - (
@@ -703,13 +636,7 @@ class BioFile:
         )
         max_heap_rows = int(available_heap * 0.8) // row_bytes
 
-        # Use the more restrictive constraint
-        tile_height = min(tile_height, max_heap_rows)
-
-        # Ensure at least 1 row
-        tile_height = max(1, tile_height)
-
-        return tile_height
+        return max(1, min(tile_height, max_heap_rows))
 
     def _read_plane_tiled(
         self,
@@ -718,106 +645,73 @@ class BioFile:
         t: int,
         c: int,
         z: int,
-        y: slice,
-        x: slice,
+        y_start: int,
+        x_start: int,
+        height: int,
+        width: int,
     ) -> np.ndarray:
         """
-        Read a large plane using full-width row tiling to avoid 2GB limit.
+        Read large plane via tiling to avoid 2GB Java array limit.
 
-        Uses buffer reuse strategy:
-        1. Allocate ONE reusable Java buffer
-        2. For each tile: read into buffer, convert to numpy, copy to output
-        3. Reuse the same buffer for all tiles
-
-        This approach minimizes allocations and openBytes() calls.
+        Key insight: openBytes() dominates time (~98%), so minimize tile count.
+        Strategy: Reuse one large buffer, read full-width rows, copy to output.
         """
         shape = meta.shape
 
-        # Get slice bounds
-        y_start, y_stop, _ = y.indices(shape.y)
-        x_start, x_stop, _ = x.indices(shape.x)
-        height = y_stop - y_start
-        width = x_stop - x_start
+        # Preallocate output
+        output_shape = (height, width, shape.rgb) if shape.rgb > 1 else (height, width)
+        output = np.empty(output_shape, dtype=meta.dtype)
 
-        # Preallocate output array
-        if shape.rgb > 1:
-            output = np.empty((height, width, shape.rgb), dtype=meta.dtype)
-        else:
-            output = np.empty((height, width), dtype=meta.dtype)
-
-        # Calculate tile size (full-width rows, considering heap constraints)
+        # Calculate tile size
         tile_height = self._calculate_tile_height(meta, width)
+        row_bytes = width * meta.dtype.itemsize * meta.shape.rgb
 
-        # Calculate buffer size
-        bytes_per_pixel = meta.dtype.itemsize
-        rgb_channels = shape.rgb
-        row_bytes = width * bytes_per_pixel * rgb_channels
-
-        # Try to allocate buffer, falling back to smaller tiles on OOM
+        # Allocate buffer with fallback for OOM
+        # Key lesson: Heap size often limits us before theoretical 2GB limit
         tile_buffer = None
-        min_tile_height = max(1, height // 100)  # At least 1% of height
-        buffer_size = tile_height * row_bytes
-        OutOfMemoryError = jimport("java.lang.OutOfMemoryError")
+        min_tile_height = max(1, height // 100)
 
         while tile_buffer is None and tile_height >= min_tile_height:
             try:
-                buffer_size = tile_height * row_bytes
-                tile_buffer = jpype.JArray(jpype.JByte)(buffer_size)  # pyright: ignore[reportCallIssue]
-            except OutOfMemoryError as e:
-                tile_height = tile_height // 2
-                if tile_height < min_tile_height:
-                    gb_needed = buffer_size / (1024**3)
-                    raise MemoryError(
-                        f"Cannot allocate tile buffer (need {gb_needed:.2f} GB). "
-                        f"Insufficient JVM heap space. "
-                        f"Set JAVA_TOOL_OPTIONS='-Xmx8g' to increase heap size."
-                    ) from e
+                tile_buffer = jpype.JArray(jpype.JByte)(tile_height * row_bytes)  # pyright: ignore[reportCallIssue]
+            except Exception as e:
+                if "OutOfMemoryError" in str(e) or "heap space" in str(e):
+                    tile_height //= 2
+                    if tile_height < min_tile_height:
+                        gb = tile_height * row_bytes / 1024**3
+                        raise MemoryError(
+                            f"Cannot allocate {gb:.2f} GB tile buffer. "
+                            f"Set JAVA_TOOL_OPTIONS='-Xmx8g' to increase heap."
+                        ) from e
+                else:
+                    raise
 
-        # Ensure buffer was successfully allocated
-        assert tile_buffer is not None, "Failed to allocate tile buffer"
-
-        # Get plane index
         plane_idx = reader.getIndex(z, c, t)
 
-        # Read tiles into output
+        # Read tiles
         y_offset = 0
         for y0 in range(0, height, tile_height):
             h = min(tile_height, height - y0)
 
-            # Read into reusable buffer using buffer-accepting overload
-            reader.openBytes(
-                plane_idx,
-                tile_buffer,  # Reusable buffer
-                x_start,  # x offset in file
-                y_start + y0,  # y offset in file
-                width,  # full width
-                h,  # tile height
-            )
+            reader.openBytes(plane_idx, tile_buffer, x_start, y_start + y0, width, h)
 
-            # Zero-copy view of filled portion
-            # count is number of dtype elements, not bytes
-            element_count = h * width * rgb_channels
+            # View tile data (count is elements, not bytes)
             tile_data = np.frombuffer(
                 memoryview(tile_buffer),
                 dtype=meta.dtype,
-                count=element_count,  # Only read filled portion for edge tiles
+                count=h * width * shape.rgb,
             )
 
-            # Copy directly into output using flattened view (faster than reshape+copy)
+            # Copy to output (faster via flattened view for interleaved data)
             if shape.rgb > 1:
                 if meta.is_interleaved:
-                    # Data is already in correct order: copy to flattened view
-                    flat_view = output[y_offset : y_offset + h, :, :].ravel()
-                    np.copyto(flat_view, tile_data)
+                    output[y_offset : y_offset + h].ravel()[:] = tile_data
                 else:
-                    # Need to transpose: use reshape approach
-                    tile = tile_data.reshape(rgb_channels, h, width)
-                    tile = np.transpose(tile, (1, 2, 0))
-                    output[y_offset : y_offset + h, :, :] = tile
+                    # Non-interleaved needs transpose
+                    tile = tile_data.reshape(shape.rgb, h, width).transpose(1, 2, 0)
+                    output[y_offset : y_offset + h] = tile
             else:
-                # Grayscale: copy to flattened view
-                flat_view = output[y_offset : y_offset + h, :].ravel()
-                np.copyto(flat_view, tile_data)
+                output[y_offset : y_offset + h].ravel()[:] = tile_data
 
             y_offset += h
 
