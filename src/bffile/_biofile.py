@@ -64,7 +64,7 @@ if _BFDIR:
 # Key insight: This is a HARD limit in Java - can't be increased without JVM changes.
 # Solution: Automatic tiling when reading >2GB planes (transparent to users)
 MAX_JAVA_ARRAY_SIZE: int = 2**31 - 8
-if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):
+if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):  # pragma: no cover
     try:
         MAX_JAVA_ARRAY_SIZE = int(_max_bytes)
     except ValueError:
