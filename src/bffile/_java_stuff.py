@@ -106,23 +106,8 @@ def redirect_java_logging(logger: logging.Logger | None = None) -> None:
         root.addAppender(proxy)
 
 
-@cache
-def hide_memoization_warning() -> None:
-    """HACK: this silences a warning about memoization for now.
-
-    An illegal reflective access operation has occurred
-    https://github.com/ome/bioformats/issues/3659
-    """
-    with contextlib.suppress(Exception):
-        import jpype
-
-        System = jpype.JPackage("java").lang.System
-        System.err.close()
-
-
 @cache  # run only once
 def start_jvm() -> None:
     """Start the JVM if not already running."""
     scyjava.start_jvm()  # won't repeat if already running
     redirect_java_logging()
-    hide_memoization_warning()

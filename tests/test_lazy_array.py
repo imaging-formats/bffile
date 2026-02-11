@@ -241,3 +241,70 @@ def test_multi_series_independence(multiseries_file) -> None:
         assert np.array_equal(lazy_s1, truth_s1[0, 0, 0])
         assert np.array_equal(lazy_s0_second, truth_s0[0, 0, 0])
         assert np.array_equal(lazy_s0_first, lazy_s0_second)
+
+
+def test_tile_height_calculation(simple_file: Path) -> None:
+    """Test that tile height calculation respects Java limit."""
+    with BioFile(simple_file) as bf:
+        reader = bf.java_reader()
+        reader.setSeries(0)
+        reader.setResolution(0)
+        meta = bf.core_meta(0, 0)
+
+        # Test with full width
+        tile_height = bf._calculate_tile_height(meta, meta.shape.x)
+
+        # Calculate bytes for the tile
+        from bffile._biofile import _calculate_plane_bytes
+
+        tile_bytes = _calculate_plane_bytes(meta, tile_height, meta.shape.x)
+
+        # Should be under Java's limit
+        assert tile_bytes <= 2**31 - 1
+
+        # Should be at least 1 row
+        assert tile_height >= 1
+
+
+def test_tiled_vs_direct_read_consistency(simple_file: Path) -> None:
+    """Test that tiled reads produce same results as direct reads."""
+    with BioFile(simple_file) as bf:
+        reader = bf.java_reader()
+        reader.setSeries(0)
+        reader.setResolution(0)
+        meta = bf.core_meta(0, 0)
+
+        # Direct read
+        direct = bf._read_plane_direct(reader, meta, 0, 0, 0, slice(None), slice(None))
+
+        # Tiled read
+        tiled = bf._read_plane_tiled(reader, meta, 0, 0, 0, slice(None), slice(None))
+
+        # Results should be identical
+        np.testing.assert_array_equal(direct, tiled)
+
+
+def test_tiled_read_subregion(simple_file: Path) -> None:
+    """Test that tiled reads work correctly for subregions."""
+    with BioFile(simple_file) as bf:
+        reader = bf.java_reader()
+        reader.setSeries(0)
+        reader.setResolution(0)
+        meta = bf.core_meta(0, 0)
+
+        # Skip if image too small
+        if meta.shape.y < 20 or meta.shape.x < 20:
+            pytest.skip("Image too small for subregion test")
+
+        # Define a subregion
+        y_slice = slice(5, 15)
+        x_slice = slice(10, 20)
+
+        # Direct read of subregion
+        direct = bf._read_plane_direct(reader, meta, 0, 0, 0, y_slice, x_slice)
+
+        # Tiled read of subregion
+        tiled = bf._read_plane_tiled(reader, meta, 0, 0, 0, y_slice, x_slice)
+
+        # Results should be identical
+        np.testing.assert_array_equal(direct, tiled)
