@@ -511,7 +511,7 @@ class BioFile(Sequence[Series]):
         return len(self._core_meta_list)
 
     def series_count(self) -> int:
-        """Return the number of series in the file."""
+        """Return the number of series in the file (same as `len(bf)`)."""
         return len(self)
 
     @overload
