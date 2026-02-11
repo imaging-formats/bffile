@@ -44,10 +44,12 @@ repository = "https://github.com/tlambert03/bffile"
 
 [project.optional-dependencies]
 dask = ["dask[array]>=2024.11.0"]
+zarr = ["zarr>=3.0.8; python_version>='3.11'"]
 
 [dependency-groups]
 test = [
     "bffile[dask]",
+    "bffile[zarr]",
     "pytest>=8.3.5",
     "pytest-cov>=6.1.1",
     "requests>=2.32.3",

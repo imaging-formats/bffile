@@ -13,3 +13,10 @@ from ._lazy_array import LazyBioArray
 from ._series import Series
 
 __all__ = ["BioFile", "LazyBioArray", "Series", "imread"]
+
+try:
+    from ._zarr_store import BioFormatsStore
+
+    __all__ = [*__all__, "BioFormatsStore"]
+except ImportError:
+    pass

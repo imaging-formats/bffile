@@ -9,6 +9,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from bffile._biofile import BioFile
+    from bffile._zarr_store import BioFormatsStore
 
 
 class LazyBioArray:
@@ -118,6 +119,27 @@ class LazyBioArray:
     def is_rgb(self) -> bool:
         """True if image has RGB/RGBA components (ndim == 6)."""
         return self.ndim == 6
+
+    def as_zarr(self, *, tile_size: tuple[int, int] | None = None) -> BioFormatsStore:
+        """Create a read-only zarr v3 store backed by this array.
+
+        Each zarr chunk maps to a single ``read_plane()`` call. Requires
+        the ``zarr`` extra (``pip install bffile[zarr]``).
+
+        Parameters
+        ----------
+        tile_size : tuple[int, int], optional
+            If provided, Y and X are chunked into tiles of this size.
+            Default is full-plane chunks ``(1, 1, 1, Y, X)``.
+
+        Returns
+        -------
+        BioFormatsStore
+            A zarr v3 Store suitable for ``zarr.open(store, mode="r")``.
+        """
+        from bffile._zarr_store import BioFormatsStore
+
+        return BioFormatsStore(self, tile_size=tile_size)
 
     def __repr__(self) -> str:
         """String representation."""
