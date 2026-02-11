@@ -563,7 +563,17 @@ class BioFile:
         y: slice,
         x: slice,
     ) -> np.ndarray:
-        """Dispatch to tiled or direct read based on plane size."""
+        """Fast plane reading for hot path (internal use only).
+
+
+        This method skips all validation, metadata lookups, and series/resolution
+        setting, assuming they've been done once before entering a tight loop.
+
+        It *does*, however, dispatch to tiled or direct read based on plane size.
+        (Note: users have full power to control tiling via slicing into LazyBioArray,
+        or by using to_dask()... this is just a safety net for requests that would
+        exceed Java limits.)
+        """
         shape = meta.shape
         y_start, y_stop, _ = y.indices(shape.y)
         x_start, x_stop, _ = x.indices(shape.x)
@@ -611,29 +621,19 @@ class BioFile:
 
         return im
 
-    def _calculate_tile_height(
-        self,
-        meta: CoreMetadata,
-        region_width: int,
-    ) -> int:
-        """
-        Calculate max rows per tile respecting Java array limit and heap space.
+    def _calculate_tile_height(self, meta: CoreMetadata, region_width: int) -> int:
+        """Calculate max rows per tile respecting Java array limit and heap space.
 
         Uses full-width rows (no X tiling) to minimize openBytes() calls.
-        Typical result: 3 tiles of ~2GB each for 4.23GB planes.
         """
         row_bytes = region_width * meta.dtype.itemsize * meta.shape.rgb
 
         # Constraint 1: Java's max byte array size
         tile_height = MAX_JAVA_ARRAY_SIZE // row_bytes
 
-        # Constraint 2: Available heap (80% safety margin)
-        # Key lesson: Practical limit often lower than theoretical due to heap size
-        Runtime = jimport("java.lang.Runtime")
-        runtime = Runtime.getRuntime()
-        available_heap = runtime.maxMemory() - (
-            runtime.totalMemory() - runtime.freeMemory()
-        )
+        # Constraint 2: Available heap (with 80% safety margin)
+        rt = jimport("java.lang.Runtime").getRuntime()
+        available_heap = rt.maxMemory() - (rt.totalMemory() - rt.freeMemory())
         max_heap_rows = int(available_heap * 0.8) // row_bytes
 
         return max(1, min(tile_height, max_heap_rows))
@@ -650,8 +650,7 @@ class BioFile:
         height: int,
         width: int,
     ) -> np.ndarray:
-        """
-        Read large plane via tiling to avoid 2GB Java array limit.
+        """Read large plane via tiling to avoid 2GB Java array limit.
 
         Key insight: openBytes() dominates time (~98%), so minimize tile count.
         Strategy: Reuse one large buffer, read full-width rows, copy to output.
@@ -670,21 +669,20 @@ class BioFile:
         # Key lesson: Heap size often limits us before theoretical 2GB limit
         tile_buffer = None
         min_tile_height = max(1, height // 100)
-
+        OutOfMemoryError = jimport("java.lang.OutOfMemoryError")
         while tile_buffer is None and tile_height >= min_tile_height:
             try:
                 tile_buffer = jpype.JArray(jpype.JByte)(tile_height * row_bytes)  # pyright: ignore[reportCallIssue]
-            except Exception as e:
-                if "OutOfMemoryError" in str(e) or "heap space" in str(e):
-                    tile_height //= 2
-                    if tile_height < min_tile_height:
-                        gb = tile_height * row_bytes / 1024**3
-                        raise MemoryError(
-                            f"Cannot allocate {gb:.2f} GB tile buffer. "
-                            f"Set JAVA_TOOL_OPTIONS='-Xmx8g' to increase heap."
-                        ) from e
-                else:
-                    raise
+            except OutOfMemoryError as e:
+                tile_height //= 2
+                if tile_height < min_tile_height:
+                    gb = tile_height * row_bytes / 1024**3
+                    raise MemoryError(
+                        f"Cannot allocate {gb:.2f} GB tile buffer. "
+                        f"Set JAVA_TOOL_OPTIONS='-Xmx8g' to increase heap. Or further "
+                        "reduce tile size by setting the environment variable "
+                        "BIOFORMATS_MAX_JAVA_BYTES to a smaller value."
+                    ) from e
 
         plane_idx = reader.getIndex(z, c, t)
 
@@ -702,7 +700,7 @@ class BioFile:
                 count=h * width * shape.rgb,
             )
 
-            # Copy to output (faster via flattened view for interleaved data)
+            # Copy to output
             if shape.rgb > 1:
                 if meta.is_interleaved:
                     output[y_offset : y_offset + h].ravel()[:] = tile_data
