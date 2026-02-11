@@ -60,7 +60,7 @@ if _BFDIR:
     BIOFORMATS_MEMO_DIR.mkdir(exist_ok=True, parents=True)
 
 # Configure maximum Java byte array size from environment
-# Default: 2^31 - 1 (Java's maximum signed integer)
+# Default: 2^31 - 8 (Java's maximum signed integer)
 # Can be reduced via BIOFORMATS_MAX_JAVA_BYTES for more conservative tiling
 MAX_JAVA_ARRAY_SIZE: int = 2**31 - 8
 if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):
@@ -677,8 +677,7 @@ class BioFile:
 
         Strategy: Read full-width rows (no X tiling) to minimize overhead
         and match sequential I/O patterns. Calculate how many rows fit
-        within Java's byte array limit (configurable via
-        BIOFORMATS_MAX_JAVA_BYTES).
+        within both Java's byte array limit and available heap space.
 
         For CMU-1.svs (46000 x 32914 x 3 x 1) with default limit:
         - Row bytes: 46,000 x 3 x 1 = 138,000 bytes/row
@@ -693,9 +692,19 @@ class BioFile:
         rgb_channels = meta.shape.rgb
         row_bytes = region_width * bytes_per_pixel * rgb_channels
 
-        # How many full rows fit in max Java array?
-        # Uses module-level MAX_JAVA_ARRAY_SIZE (configurable via env var)
+        # Constraint 1: Java's maximum byte array size
         tile_height = MAX_JAVA_ARRAY_SIZE // row_bytes
+
+        # Constraint 2: Available Java heap space (use 80% for safety)
+        Runtime = jimport("java.lang.Runtime")
+        runtime = Runtime.getRuntime()
+        available_heap = runtime.maxMemory() - (
+            runtime.totalMemory() - runtime.freeMemory()
+        )
+        max_heap_rows = int(available_heap * 0.8) // row_bytes
+
+        # Use the more restrictive constraint
+        tile_height = min(tile_height, max_heap_rows)
 
         # Ensure at least 1 row
         tile_height = max(1, tile_height)
@@ -736,7 +745,7 @@ class BioFile:
         else:
             output = np.empty((height, width), dtype=meta.dtype)
 
-        # Calculate tile size (full-width rows)
+        # Calculate tile size (full-width rows, considering heap constraints)
         tile_height = self._calculate_tile_height(meta, width)
 
         # Calculate buffer size
@@ -744,40 +753,25 @@ class BioFile:
         rgb_channels = shape.rgb
         row_bytes = width * bytes_per_pixel * rgb_channels
 
-        # Check available Java heap and adjust tile size if needed
-        Runtime = jimport("java.lang.Runtime")
-        runtime = Runtime.getRuntime()
-        available_heap = runtime.maxMemory() - (
-            runtime.totalMemory() - runtime.freeMemory()
-        )
-
-        # Use at most 80% of available heap for tile buffer
-        max_buffer_size = int(available_heap * 0.8)
-        if tile_height * row_bytes > max_buffer_size:
-            tile_height = max(1, max_buffer_size // row_bytes)
-
         # Try to allocate buffer, falling back to smaller tiles on OOM
         tile_buffer = None
         min_tile_height = max(1, height // 100)  # At least 1% of height
         buffer_size = tile_height * row_bytes
+        OutOfMemoryError = jimport("java.lang.OutOfMemoryError")
 
         while tile_buffer is None and tile_height >= min_tile_height:
             try:
                 buffer_size = tile_height * row_bytes
                 tile_buffer = jpype.JArray(jpype.JByte)(buffer_size)  # pyright: ignore[reportCallIssue]
-            except Exception as e:
-                if "OutOfMemoryError" in str(e) or "Java heap space" in str(e):
-                    tile_height = tile_height // 2
-                    if tile_height < min_tile_height:
-                        gb_needed = buffer_size / (1024**3)
-                        gb_available = available_heap / (1024**3)
-                        raise MemoryError(
-                            f"Cannot allocate tile buffer (need {gb_needed:.2f} GB, "
-                            f"only {gb_available:.2f} GB available). "
-                            f"Set JAVA_TOOL_OPTIONS='-Xmx8g' to increase heap size."
-                        ) from e
-                else:
-                    raise
+            except OutOfMemoryError as e:
+                tile_height = tile_height // 2
+                if tile_height < min_tile_height:
+                    gb_needed = buffer_size / (1024**3)
+                    raise MemoryError(
+                        f"Cannot allocate tile buffer (need {gb_needed:.2f} GB). "
+                        f"Insufficient JVM heap space. "
+                        f"Set JAVA_TOOL_OPTIONS='-Xmx8g' to increase heap size."
+                    ) from e
 
         # Ensure buffer was successfully allocated
         assert tile_buffer is not None, "Failed to allocate tile buffer"
