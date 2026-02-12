@@ -103,7 +103,7 @@ stateDiagram-v2
 | [`open()`][bffile.BioFile.open] (first call) | Full initialization — format detection, header parsing (`setId` in Java). Slow. |
 | [`close()`][bffile.BioFile.close] | Releases the OS file handle but keeps all parsed state in memory. |
 | [`open()`][bffile.BioFile.open] (after `close()`) | Just reopens the file handle (`reopenFile` in Java). Fast. |
-| [`destroy()`][bffile.BioFile.destroy] / `__exit__()` | Full teardown — Java reader and all cached state released. |
+| [`destroy()`][bffile.BioFile.destroy] / [`__exit__()`][bffile.BioFile.__exit__] | Full teardown — Java reader and all cached state released. |
 
 `close()` is lightweight: metadata (via `core_metadata()`, `len()`,
 etc.) remains accessible while the file handle is released. This is
@@ -337,8 +337,9 @@ darr = bf.to_dask(tile_size="auto")           # query Bio-Formats for optimal si
 
 ### OME Metadata
 
-`BioFile` can parse the file's OME metadata into an
-[`ome_types.OME`][] object:
+[`ome_metadata()`][bffile.BioFile.ome_metadata] returns a rich, structured
+[`ome_types.OME`][] object, with all of the metadata parsed and organized
+according to the OME data model.
 
 ```python
 with BioFile("image.nd2") as bf:
@@ -354,7 +355,7 @@ with BioFile("image.nd2") as bf:
 
 [`core_metadata()`][bffile.BioFile.core_metadata] returns a
 [`CoreMetadata`][bffile.CoreMetadata] dataclass with `shape`, `dtype`, and
-acquisition flags:
+acquisition flags for a given series/resolution:
 
 ```python
 with BioFile("image.nd2") as bf:
@@ -368,7 +369,7 @@ with BioFile("image.nd2") as bf:
 ### Global Metadata
 
 [`global_metadata()`][bffile.BioFile.global_metadata] returns
-reader-specific key/value pairs:
+reader/file-specific key/value pairs:
 
 ```python
 with BioFile("image.nd2") as bf:

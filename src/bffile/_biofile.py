@@ -99,27 +99,26 @@ class BioFile(Sequence[Series]):
     BioFile manages the underlying Java reader through three states:
 
         UNINITIALIZED ── open() ──> OPEN ── close() ──> SUSPENDED
-             ^    ^                  | ^                     |
-             |    └── destroy() ─────┘ └──── open() ─────────┘
+             ↑    ↑                  │ ↑                     │
+             │    └── destroy() ─────┘ └──── open() ─────────┘
              └─────── destroy() ─────────────────────────────┘
 
-    - `open()` first call: full initialization via `setId()` (slow).
-    - `open()` after `close()`: fast reopen via `reopenFile()`.
-      Only reacquires the file handle — no re-parsing or format detection.
+    - `open()` first call: full initialization via `Java:setId()` (slow).
     - `close()`: releases file handles but preserves all parsed metadata
-      and reader state in memory (Java `close(fileOnly=true)`).
+      and reader state in memory (`Java:close(fileOnly=true)`).
+    - `open()` after `close()`: fast: simply reacquires the file handle — no re-parsing.
     - `destroy()` / `__exit__()`: full teardown — releases the Java
-      reader and all cached state, returning to UNINITIALIZED.  `open()`
+      reader and all cached state, returning to `UNINITIALIZED`.  `open()`
       can be called again but will require full re-initialization.
-    - GC finalizer: equivalent to `destroy()`.
+    - `__del__` GC finalizer: equivalent to `destroy()`.
 
-    SUSPENDED preserves the Java reader's parsed state (format-specific
+    `SUSPENDED` preserves the Java reader's parsed state (format-specific
     headers, CoreMetadata, OME-XML DOM, metadata hashtable) in JVM heap,
     as well as Python-side `core_metadata()`. Only file handles are released.
     This is what enables the fast `open()` path.
 
     `destroy()` releases all of these, making the Java objects eligible for
-    JVM garbage collection. The BioFile reverts to its initial state.
+    JVM garbage collection. The `BioFile` reverts to its initial state.
 
     Parameters
     ----------
@@ -265,9 +264,17 @@ class BioFile(Sequence[Series]):
 
         On first call, performs full initialization (`setId`). If the file
         was previously closed via `close()`, reopens cheaply by reacquiring
-        only the file handle without re-parsing (`reopenFile`).
+        only the file handle without re-parsing.
 
         Safe to call multiple times — no-op if already open.
+
+        !!! tip "Returns self"
+            This method returns `self`, so you can chain it directly after the
+            constructor if you prefer that style:
+
+            ```python
+            bf = BioFile(path).open()
+            ```
         """
         with self._lock:
             if self._java_reader is not None and not self._suspended:
@@ -323,7 +330,7 @@ class BioFile(Sequence[Series]):
 
         Releases the underlying file handle via Java `close(fileOnly=true)`
         but keeps all parsed metadata and reader state in memory. A subsequent
-        `open()` call will cheaply reacquire the handle via `reopenFile()`.
+        `open()` call will cheaply reacquire the file handle.
 
         Metadata remains accessible via `core_metadata()` and `len()`
         while the file is closed.
@@ -550,7 +557,7 @@ class BioFile(Sequence[Series]):
         return self
 
     def __exit__(self, *_args: Any) -> None:
-        """Exit context manager — full resource cleanup."""
+        """Exit context manager — full resource cleanup, including the Java reader."""
         self.destroy()
 
     def __len__(self) -> int:
