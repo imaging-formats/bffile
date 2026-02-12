@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from textwrap import dedent
 
 import numpy as np
 
@@ -32,7 +33,7 @@ def _adapt_block(block: str, test_file: str) -> str:
     block = block.replace("slice(200, 300)", "slice(10, 20)")
     # Test file has Z=5 (valid indices 0-4)
     block = block.replace("z=5,", "z=4,")
-    return block
+    return dedent(block)
 
 
 def test_usage_docs(multiseries_file: Path) -> None:
@@ -51,6 +52,8 @@ def test_usage_docs(multiseries_file: Path) -> None:
         except ImportError:
             # Skip blocks requiring optional dependencies (e.g. dask)
             continue
+        except Exception as e:
+            raise RuntimeError(f"Error executing block {i}:\n{block}") from e
 
         # After each block, reopen any BioFile that was closed by a context
         # manager exit, so that continuation snippets can use `bf` and `arr`.

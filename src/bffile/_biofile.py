@@ -418,8 +418,9 @@ class BioFile(Sequence[Series]):
     ) -> dask.array.Array:
         """Create dask array for lazy computation on Bio-Formats data.
 
-        Returns a dask array in TCZYX[r] order that wraps a LazyBioArray.
-        Uses single-threaded scheduler by default for Bio-Formats thread safety.
+        Returns a dask array in TCZYX[r] order that wraps a
+        [`LazyBioArray`][bffile.LazyBioArray]. Uses single-threaded scheduler by default
+        for Bio-Formats thread safety.
 
         Parameters
         ----------
@@ -559,7 +560,7 @@ class BioFile(Sequence[Series]):
         return len(self._core_meta_list)
 
     def series_count(self) -> int:
-        """Return the number of series in the file (same as `len(bf)`)."""
+        """Return the number of series in the file (same as [`__len__`][bffile.BioFile.__len__])."""  # noqa: E501
         return len(self)
 
     @overload
@@ -600,7 +601,9 @@ class BioFile(Sequence[Series]):
             If True, only return files that do not contain pixel data (e.g., metadata,
             companion files, etc...), by default `False`.
         """
-        return [str(x) for x in self._ensure_java_reader().getUsedFiles(metadata_only) or ()]
+        return [
+            str(x) for x in self._ensure_java_reader().getUsedFiles(metadata_only) or ()
+        ]
 
     def lookup_table(self, series: int = 0) -> np.ndarray | None:
         """Return the color lookup table for an indexed-color series.

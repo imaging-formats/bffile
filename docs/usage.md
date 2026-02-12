@@ -55,7 +55,27 @@ bf.open()     # cheap — just reacquires the file handle
 bf.destroy()  # full cleanup (or let GC handle it)
 ```
 
-### Understanding lifecycle
+!!! danger "Critical: Some operations require an open file"
+
+    `BioFile` does *not* attempt to magically open/close files for you as needed.
+    However, some methods like [`as_array()`](#reading-data-with-lazybioarray) and
+    [`to_dask()`](#using-dask-for-lazy-computation) return objects that require the
+    file to be open when indexed or computed. You are responsible for ensuring the
+    file is open while using those objects.
+
+    ```python
+    from bffile import BioFile
+
+    with BioFile("image.nd2") as bf:
+        arr = bf.as_array()
+
+    try:
+        arr[0, 0, 2]  # ERROR!!
+    except RuntimeError as e:
+        print(e)  # "File not open - call open() first"
+    ```
+
+### Understanding Lifecycle
 
 `BioFile` has three states:
 
@@ -79,11 +99,11 @@ stateDiagram-v2
 
 | Transition | What happens |
 | --- | --- |
-| `__init__()` | Creates the `BioFile` object but does not open the file or initialize the reader. |
-| `open()` (first call) | Full initialization — format detection, header parsing (`setId` in Java). Slow. |
-| `close()` | Releases the OS file handle but keeps all parsed state in memory. |
-| `open()` (after `close()`) | Just reopens the file handle (`reopenFile` in Java). Fast. |
-| `destroy()` / `__exit__()` | Full teardown — Java reader and all cached state released. |
+| [`__init__()`][bffile.BioFile] | Creates the `BioFile` object but does not open the file or initialize the reader. |
+| [`open()`][bffile.BioFile.open] (first call) | Full initialization — format detection, header parsing (`setId` in Java). Slow. |
+| [`close()`][bffile.BioFile.close] | Releases the OS file handle but keeps all parsed state in memory. |
+| [`open()`][bffile.BioFile.open] (after `close()`) | Just reopens the file handle (`reopenFile` in Java). Fast. |
+| [`destroy()`][bffile.BioFile.destroy] / `__exit__()` | Full teardown — Java reader and all cached state released. |
 
 `close()` is lightweight: metadata (via `core_metadata()`, `len()`,
 etc.) remains accessible while the file handle is released. This is
@@ -95,61 +115,43 @@ read more data later.
     If you want the fast-reopen behavior, use explicit `open()` / `close()`
     calls instead.
 
-### Memoization
+!!! note "Memoization"
 
-The `memoize` parameter controls whether the initialized reader state is
-cached to a `.bfmemo` file on disk. This only affects the
-**UNINITIALIZED → OPEN** transition (i.e., when `setId()` is called):
+    The `memoize` parameter controls whether the initialized reader state is
+    cached to a `.bfmemo` file on disk. This only affects the
+    `UNINITIALIZED → OPEN` transition (i.e., when the java reader is fully initialized from scratch).
 
-```python
-# First open: full init + saves .bfmemo file to disk
-# Subsequent opens: loads from .bfmemo instead of re-parsing
-with BioFile("image.nd2", memoize=True) as bf:
-    data = bf.read_plane()
-```
+    ```python
+    # First open: full init + saves .bfmemo file to disk
+    # Subsequent opens: loads from .bfmemo instead of re-parsing
+    with BioFile("image.nd2", memoize=True) as bf:
+        data = bf.read_plane()
+    ```
 
-The `memoize` value is a threshold in milliseconds — if `setId()` takes
-longer than this, the reader state is serialized. `memoize=True` (same
-as `memoize=1`) means "always memoize".
+    The `memoize` value is a threshold in milliseconds — if `setId()` takes
+    longer than this, the reader state is serialized. `memoize=True` (same
+    as `memoize=1`) means "always memoize".
 
-!!! note "Memoization vs suspend/resume"
-    Memoization and the `close()`/`open()` suspend/resume cycle solve
-    different problems:
+    !!! note "Memoization vs suspend/resume"
+        Memoization and the `close()`/`open()` suspend/resume cycle solve
+        different problems:
 
-    - **Memoization** speeds up the *first* `open()` call in a new
-      Python session by caching the parsed reader state to disk.
-      Useful for large files where `setId()` is expensive.
-    - **Suspend/resume** (`close()` + `open()`) keeps the parsed state
-      *in memory* and just releases/reacquires the file handle.
-      Much faster (~0.3ms vs ~70ms), but only works within the same
-      `BioFile` instance.
+        - **Memoization** speeds up the *first* `open()` call in a new
+        Python session by caching the parsed reader state to disk.
+        Useful for large files where `setId()` is expensive.
+        - **Suspend/resume** (`close()` + `open()`) keeps the parsed state
+        *in memory* and just releases/reacquires the file handle.
+        Much faster (~0.3ms vs ~70ms), but only works within the same
+        `BioFile` instance.
 
-    The suspend/resume path does **not** involve the Memoizer at all —
-    no `.bfmemo` file is read or written.
+        The suspend/resume path does **not** involve the Memoizer at all —
+        no `.bfmemo` file is read or written.
 
-By default, `.bfmemo` files are written next to the source file. Set
-the `BIOFORMATS_MEMO_DIR` environment variable to use a different
-directory.
+    By default, `.bfmemo` files are written next to the source file. Set
+    the `BIOFORMATS_MEMO_DIR` environment variable to use a different
+    directory.
 
-`BioFile` does *not* attempt to magically open/close files for you.
-Methods like [`as_array()`](#reading-data-with-lazybioarray) and
-[`to_dask()`](#using-dask-for-lazy-computation) return objects that
-require the file to be open when indexed or computed. You are
-responsible for ensuring the file is open while using those objects.
-
-```python
-from bffile import BioFile
-
-with BioFile("image.nd2") as bf:
-    arr = bf.as_array()
-
-try:
-    arr[0, 0, 2]  # ERROR!!
-except RuntimeError as e:
-    print(e)  # "File not open - call open() first"
-```
-
-## The Data Model
+## The Series Data Model
 
 Bio-Formats models files as a sequence of **series** (e.g., wells in a plate,
 fields of view, tiles in a mosaic, etc...). Each series is a 5D dataset with shape
@@ -186,7 +188,7 @@ the `series=` argument on all calls back to the parent
 [`BioFile`][bffile.BioFile]:
 
 [`BioFile`][bffile.BioFile] implements `Sequence[bffile.Series]`, so you can
-index, slice, and iterate:
+index, and iterate:
 
 ```python
 with BioFile("multi_scene.czi") as bf:
@@ -337,32 +339,6 @@ darr = bf.to_dask(tile_size="auto")           # query Bio-Formats for optimal si
     pip install bffile[dask]
     ```
 
-## Low-Level Plane Reading
-
-For low-level access to the Bio-Formats `openBytes` API,
-[`read_plane()`][bffile.BioFile.read_plane] reads a single 2D
-plane (or sub-region) directly:
-
-```python
-with BioFile("image.nd2") as bf:
-    # read a specific plane in a specific series/resolution
-    plane = bf.read_plane(t=0, c=1, z=5, series=1, resolution=0)
-
-    # read a sub-region
-    roi = bf.read_plane(t=0, c=0, z=0, y=slice(200, 300), x=slice(200, 300))
-```
-
-For tight loops, you can reuse a buffer to avoid repeated allocation:
-
-```python
-with BioFile("image.nd2") as bf:
-    meta = bf.core_metadata()
-    buf = np.empty((meta.shape.y, meta.shape.x), dtype=meta.dtype)
-    for t in range(meta.shape.t):
-        bf.read_plane(t=t, buffer=buf)
-        # process buf...
-```
-
 ## Metadata
 
 ### OME Metadata
@@ -383,7 +359,8 @@ with BioFile("image.nd2") as bf:
 ### Core Metadata
 
 [`core_metadata()`][bffile.BioFile.core_metadata] returns a
-`CoreMetadata` dataclass with shape, dtype, and acquisition flags:
+[`CoreMetadata`][bffile.CoreMetadata] dataclass with `shape`, `dtype`, and
+acquisition flags:
 
 ```python
 with BioFile("image.nd2") as bf:
@@ -397,7 +374,7 @@ with BioFile("image.nd2") as bf:
 ### Global Metadata
 
 [`global_metadata()`][bffile.BioFile.global_metadata] returns
-reader-specific key/value pairs from the file header:
+reader-specific key/value pairs:
 
 ```python
 with BioFile("image.nd2") as bf:
