@@ -127,7 +127,7 @@ class BioFile(Sequence[Series]):
         memoize: int | bool = 0,
         options: dict[str, bool] | None = None,
     ):
-        self._path = str(Path(path).expanduser().absolute())
+        self._path = str(path)
         self._lock = RLock()
         self._meta = meta
         self._original_meta = original_meta
@@ -467,12 +467,11 @@ class BioFile(Sequence[Series]):
     @property
     def filename(self) -> str:
         """Return name of file handle."""
-        # return self._r.getCurrentFile()
         return self._path
 
     @property
     def ome_xml(self) -> str:
-        """Return OME XML string."""
+        """Return plain OME XML string."""
         reader = self.java_reader()
         if store := reader.getMetadataStore():
             try:
@@ -489,7 +488,7 @@ class BioFile(Sequence[Series]):
 
     @property
     def ome_metadata(self) -> OME:
-        """Return OME object parsed by ome_types."""
+        """Return [`ome_types.OME`][] object parsed from OME XML."""
         if not (omx_xml := self.ome_xml):  # pragma: no cover (not sure if possible)
             return OME()
         xml = _utils.clean_ome_xml_for_known_issues(omx_xml)
