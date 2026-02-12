@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 import jpype
 import numpy as np
 from ome_types import OME
-from typing_extensions import Self
 
 from bffile._core_metadata import CoreMetadata
 from bffile._series import Series
@@ -30,6 +29,7 @@ if TYPE_CHECKING:
     import dask.array
     import java.lang
     from loci.formats import IFormatReader
+    from typing_extensions import Self
 
     from bffile._lazy_array import LazyBioArray
 
@@ -84,14 +84,41 @@ class BioFile(Sequence[Series]):
     """Read image and metadata from file supported by Bioformats.
 
     BioFile instances must be explicitly opened before use, either by:
+
     1. Using a context manager: `with BioFile(path) as bf: ...`
-    2. Explicitly calling `open()` and `close()`:
-       `bf = BioFile(path); bf.open(); ...; bf.close()`
+    2. Explicitly calling `open()`: `bf = BioFile(path).open()`
 
     The recommended pattern is to use the context manager, which automatically
-    handles opening and closing the file.
+    handles opening and closing the file and cleanup of Java resources; but many usage
+    patterns *will* also require explicit open/close.
 
     BioFile instances are not thread-safe. Create separate instances per thread.
+
+    Lifecycle
+    ---------
+    BioFile manages the underlying Java reader through three states:
+
+        UNINITIALIZED ── open() ──> OPEN ── close() ──> SUSPENDED
+             ↑    ↑                  │ ↑                     │
+             │    └── destroy() ─────┘ └──── open() ─────────┘
+             └─────── destroy() ─────────────────────────────┘
+
+    - `open()` first call: full initialization via `Java:setId()` (slow).
+    - `close()`: releases file handles but preserves all parsed metadata
+      and reader state in memory (`Java:close(fileOnly=true)`).
+    - `open()` after `close()`: fast: simply reacquires the file handle — no re-parsing.
+    - `destroy()` / `__exit__()`: full teardown — releases the Java
+      reader and all cached state, returning to `UNINITIALIZED`.  `open()`
+      can be called again but will require full re-initialization.
+    - `__del__` GC finalizer: equivalent to `destroy()`.
+
+    `SUSPENDED` preserves the Java reader's parsed state (format-specific
+    headers, CoreMetadata, OME-XML DOM, metadata hashtable) in JVM heap,
+    as well as Python-side `core_metadata()`. Only file handles are released.
+    This is what enables the fast `open()` path.
+
+    `destroy()` releases all of these, making the Java objects eligible for
+    JVM garbage collection. The `BioFile` reverts to its initial state.
 
     Parameters
     ----------
@@ -127,7 +154,7 @@ class BioFile(Sequence[Series]):
         memoize: int | bool = 0,
         options: dict[str, bool] | None = None,
     ):
-        self._path = str(Path(path).expanduser().absolute())
+        self._path = str(path)
         self._lock = RLock()
         self._meta = meta
         self._original_meta = original_meta
@@ -139,16 +166,11 @@ class BioFile(Sequence[Series]):
         # 2D structure: list[series][resolution]
         self._core_meta_list: list[list[CoreMetadata]] | None = None
         self._finalizer: weakref.finalize | None = None
+        self._suspended: bool = False
 
-    def java_reader(self) -> IFormatReader:
-        """Return the native reader object.
-
-        Raises
-        ------
-        RuntimeError
-            If file is not open
-        """
-        if self._java_reader is None:
+    def _ensure_java_reader(self) -> IFormatReader:
+        """Return the native reader, raising if not open."""
+        if self._java_reader is None or self._suspended:
             raise RuntimeError("File not open - call open() first")
         return self._java_reader
 
@@ -233,76 +255,110 @@ class BioFile(Sequence[Series]):
         RuntimeError
             If file is not open
         """
-        reader = self.java_reader()
+        reader = self._ensure_java_reader()
         meta = reader.getGlobalMetadata()
         return {str(k): jtype_to_python(v) for k, v in meta.items()}
 
-    def open(self) -> None:
-        """Open file and initialize reader.
+    def open(self) -> Self:
+        """Open file and initialize reader, or re-open if previously closed.
 
-        Safe to call multiple times - will only initialize once.
-        If file is already open, this is a no-op.
+        On first call, performs full initialization (`setId`). If the file
+        was previously closed via `close()`, reopens cheaply by reacquiring
+        only the file handle without re-parsing.
+
+        Safe to call multiple times — no-op if already open.
+
+        !!! tip "Returns self"
+            This method returns `self`, so you can chain it directly after the
+            constructor if you prefer that style:
+
+            ```python
+            bf = BioFile(path).open()
+            ```
         """
         with self._lock:
-            # If already open, nothing to do
-            if self._java_reader is not None:
-                return
+            if self._java_reader is not None and not self._suspended:
+                return self  # Already open
 
-            # Create reader
-            self._java_reader = reader = jimport("loci.formats.ImageReader")()
+            if self._suspended:
+                # Fast path: reacquire file handle only
+                try:
+                    self._java_reader.reopenFile()  # type: ignore[union-attr]
+                except Exception:
+                    self.destroy()
+                    raise
+                self._suspended = False
+                return self
 
-            # Use non-flattened resolution mode for cleaner API
-            # This allows us to use setSeries(s) + setResolution(r) instead of
-            # treating each resolution as a separate series
-            reader.setFlattenedResolutions(False)
+            # Full initialization (first open, or after context-manager exit)
+            r = jimport("loci.formats.ImageReader")()
+            r.setFlattenedResolutions(False)
 
-            # Wrap with Memoizer if requested
-            # Note: Memoizer MUST wrap before setMetadataStore
             if self._memoize > 0:
                 Memoizer = jimport("loci.formats.Memoizer")
                 if BIOFORMATS_MEMO_DIR is not None:
-                    reader = Memoizer(reader, self._memoize, BIOFORMATS_MEMO_DIR)
+                    r = Memoizer(r, self._memoize, BIOFORMATS_MEMO_DIR)
                 else:
-                    reader = Memoizer(reader, self._memoize)
+                    r = Memoizer(r, self._memoize)
 
-            # Configure reader
             if self._meta:
-                reader.setMetadataStore(self._create_ome_meta())
+                r.setMetadataStore(self._create_ome_meta())
             if self._original_meta:
-                reader.setOriginalMetadataPopulated(True)
+                r.setOriginalMetadataPopulated(True)
 
             if self._options:
                 mo = jimport("loci.formats.in_.DynamicMetadataOptions")()
                 for name, value in self._options.items():
                     mo.set(name, str(value))
-                reader.setMetadataOptions(mo)
+                r.setMetadataOptions(mo)
 
-            # Open file - this is the critical operation that can fail
             try:
-                reader.setId(self._path)
-                self._core_meta_list = self._get_core_metadata(reader)
-                # The finalizer's alive state is now the source of truth for open/closed
-                self._finalizer = weakref.finalize(self, _close_java_reader, reader)
-
+                r.setId(self._path)
+                core_meta = self._get_core_metadata(r)
             except Exception:  # pragma: no cover
-                self.close()
+                with suppress(Exception):
+                    r.close()
                 raise
 
-    def close(self) -> None:
-        """Close file and release resources.
+            self._java_reader = r
+            self._core_meta_list = core_meta
+            self._finalizer = weakref.finalize(self, _close_java_reader, r)
+        return self
 
-        Safe to call multiple times - will only close once.
-        After closing, the BioFile instance can be reopened by calling open().
+    def close(self) -> None:
+        """Close file handles while preserving reader state for fast reopen.
+
+        Releases the underlying file handle via Java `close(fileOnly=true)`
+        but keeps all parsed metadata and reader state in memory. A subsequent
+        `open()` call will cheaply reacquire the file handle.
+
+        Metadata remains accessible via `core_metadata()` and `len()`
+        while the file is closed.
+
+        Safe to call multiple times — no-op if already closed.
         """
         with self._lock:
-            # Call the finalizer if it exists
+            if self._java_reader is not None and not self._suspended:
+                self._java_reader.close(True)  # fileOnly=True
+                self._suspended = True
+
+    def destroy(self) -> None:
+        """Full cleanup — release all Java resources and cached state.
+
+        Releases the Java reader and all parsed metadata, returning to
+        UNINITIALIZED. `open()` can be called again but will require full
+        re-initialization (slow path). The GC finalizer calls this
+        automatically if not called explicitly.
+
+        Safe to call multiple times or from any state.
+        """
+        with self._lock:
             if self._finalizer is not None:
                 self._finalizer()
                 self._finalizer = None
-
-            # Clear cached references
             self._java_reader = None
             self._core_meta_list = None
+            self._suspended = False
 
     def as_array(self, series: int = 0, resolution: int = 0) -> LazyBioArray:
         """Return a lazy numpy-compatible array that reads data on-demand.
@@ -353,7 +409,7 @@ class BioFile(Sequence[Series]):
 
         Planes >2GB automatically use tiled reading (transparent, ~20% slower).
         """
-        if self._java_reader is None:
+        if self.closed:
             raise RuntimeError("File not open - call open() first")
 
         from bffile._lazy_array import LazyBioArray
@@ -369,8 +425,9 @@ class BioFile(Sequence[Series]):
     ) -> dask.array.Array:
         """Create dask array for lazy computation on Bio-Formats data.
 
-        Returns a dask array in TCZYX[r] order that wraps a LazyBioArray.
-        Uses single-threaded scheduler by default for Bio-Formats thread safety.
+        Returns a dask array in TCZYX[r] order that wraps a
+        [`LazyBioArray`][bffile.LazyBioArray]. Uses single-threaded scheduler by default
+        for Bio-Formats thread safety.
 
         Parameters
         ----------
@@ -432,7 +489,7 @@ class BioFile(Sequence[Series]):
             # Validate tile_size format
             if tile_size == "auto":
                 # Query Bio-Formats for optimal tile size
-                reader = self.java_reader()
+                reader = self._ensure_java_reader()
                 reader.setSeries(series)
                 reader.setResolution(resolution)
                 tile_size = (
@@ -461,19 +518,18 @@ class BioFile(Sequence[Series]):
 
     @property
     def closed(self) -> bool:
-        """Whether the underlying file is currently closed."""
-        return self._java_reader is None
+        """Whether the underlying file handles are currently closed."""
+        return self._java_reader is None or self._suspended
 
     @property
     def filename(self) -> str:
         """Return name of file handle."""
-        # return self._r.getCurrentFile()
         return self._path
 
     @property
     def ome_xml(self) -> str:
-        """Return OME XML string."""
-        reader = self.java_reader()
+        """Return plain OME XML string."""
+        reader = self._ensure_java_reader()
         if store := reader.getMetadataStore():
             try:
                 # get metadatastore can return various types of objects,
@@ -489,7 +545,7 @@ class BioFile(Sequence[Series]):
 
     @property
     def ome_metadata(self) -> OME:
-        """Return OME object parsed by ome_types."""
+        """Return [`ome_types.OME`][] object parsed from OME XML."""
         if not (omx_xml := self.ome_xml):  # pragma: no cover (not sure if possible)
             return OME()
         xml = _utils.clean_ome_xml_for_known_issues(omx_xml)
@@ -501,8 +557,8 @@ class BioFile(Sequence[Series]):
         return self
 
     def __exit__(self, *_args: Any) -> None:
-        """Exit context manager - ensures file is closed."""
-        self.close()  # Idempotent, so safe to call
+        """Exit context manager — full resource cleanup, including the Java reader."""
+        self.destroy()
 
     def __len__(self) -> int:
         """Return the number of series in the file."""
@@ -511,7 +567,7 @@ class BioFile(Sequence[Series]):
         return len(self._core_meta_list)
 
     def series_count(self) -> int:
-        """Return the number of series in the file (same as `len(bf)`)."""
+        """Return the number of series in the file (same as [`__len__`][bffile.BioFile.__len__])."""  # noqa: E501
         return len(self)
 
     @overload
@@ -552,7 +608,9 @@ class BioFile(Sequence[Series]):
             If True, only return files that do not contain pixel data (e.g., metadata,
             companion files, etc...), by default `False`.
         """
-        return [str(x) for x in self.java_reader().getUsedFiles(metadata_only) or ()]
+        return [
+            str(x) for x in self._ensure_java_reader().getUsedFiles(metadata_only) or ()
+        ]
 
     def lookup_table(self, series: int = 0) -> np.ndarray | None:
         """Return the color lookup table for an indexed-color series.
@@ -573,7 +631,7 @@ class BioFile(Sequence[Series]):
 
         To convert this object to a [`cmap.Colormap`][]:
 
-        ```python
+        ``python
         import cmap
         from bffile import BioFile
 
@@ -581,7 +639,7 @@ class BioFile(Sequence[Series]):
             lut = bf.lookup_table()
             if lut is not None:
                 colormap = cmap.Colormap(lut / lut.max())  # Normalize to [0, 1]
-        ```
+        ``
         """
         # `is_indexed` is a bit of a misnomer here (but bioformats uses it)
         # it really means "a LUT exists", not "the image is palette-based"
@@ -592,7 +650,7 @@ class BioFile(Sequence[Series]):
         if not self.core_metadata(series).is_indexed:
             return None
 
-        reader = self.java_reader()
+        reader = self._ensure_java_reader()
         reader.setSeries(series)
         # Many readers require at least one openBytes call before LUT is available
         reader.openBytes(0, 0, 0, 1, 1)
@@ -667,7 +725,7 @@ class BioFile(Sequence[Series]):
         as_array : Create a numpy-compatible lazy array
         to_dask : Create a dask array for lazy loading
         """
-        reader = self.java_reader()
+        reader = self._ensure_java_reader()
         reader.setSeries(series)
         reader.setResolution(resolution)
 

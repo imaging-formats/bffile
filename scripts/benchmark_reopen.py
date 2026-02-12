@@ -2,8 +2,8 @@
 
 Compares three approaches:
 1. Keep file open (baseline) — no close/reopen overhead
-2. suspend/resume via close(true) + reopenFile() — fast handle release
-3. Full close + Memoizer reopen — complete teardown and rebuild
+2. close() + open() — fast handle release/reacquire (reopenFile)
+3. Full destroy + Memoizer reopen — complete teardown and rebuild
 
 Usage:
     python scripts/benchmark_reopen.py [path_to_file]
@@ -30,14 +30,14 @@ def benchmark_keep_open(path: Path, n_reads: int = 20) -> float:
 
 
 def benchmark_suspend_resume(path: Path, n_cycles: int = 20) -> float:
-    """Suspend/resume: close(true) + reopenFile() between reads."""
+    """Suspend/resume: close() + open() between reads."""
     with BioFile(path) as bf:
         meta = bf.core_metadata()
         shape = meta.shape
         t0 = time.perf_counter()
         for _ in range(n_cycles):
-            bf._suspend_file()
-            bf._resume_file()
+            bf.close()
+            bf.open()
             bf.read_plane(t=0, c=0, z=min(1, shape.z - 1))
         return (time.perf_counter() - t0) / n_cycles
 
