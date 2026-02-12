@@ -115,7 +115,7 @@ read more data later.
     If you want the fast-reopen behavior, use explicit `open()` / `close()`
     calls instead.
 
-!!! note "Memoization"
+!!! question "Memoization"
 
     **Memoization speeds up *future* calls to `open()`, from an uninitialized
     state, even across different Python sessions.**
@@ -128,11 +128,10 @@ read more data later.
 
     ```python
     # First open: full init + saves .bfmemo file to disk
-    # Subsequent opens: loads from .bfmemo instead of re-parsing
     with BioFile("image.nd2", memoize=True) as bf:
         ...
 
-    # Faster this time because it loads the .bfmemo file instead of re-parsing
+    # Subsequent opens are faster: loads from .bfmemo instead of re-parsing
     with BioFile("image.nd2", memoize=True) as bf:
         ...
     ```
