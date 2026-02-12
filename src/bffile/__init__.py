@@ -8,8 +8,9 @@ except PackageNotFoundError:  # pragma: no cover
     __version__ = "uninstalled"
 
 from ._biofile import BioFile
+from ._core_metadata import CoreMetadata, OMEShape
 from ._imread import imread
 from ._lazy_array import LazyBioArray
 from ._series import Series
 
-__all__ = ["BioFile", "LazyBioArray", "Series", "imread"]
+__all__ = ["BioFile", "CoreMetadata", "LazyBioArray", "OMEShape", "Series", "imread"]
