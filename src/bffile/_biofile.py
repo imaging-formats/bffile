@@ -84,12 +84,13 @@ class BioFile(Sequence[Series]):
     """Read image and metadata from file supported by Bioformats.
 
     BioFile instances must be explicitly opened before use, either by:
+
     1. Using a context manager: `with BioFile(path) as bf: ...`
-    2. Explicitly calling `open()` and `close()`:
-       `bf = BioFile(path); bf.open(); ...; bf.close()`
+    2. Explicitly calling `open()`: `bf = BioFile(path).open()`
 
     The recommended pattern is to use the context manager, which automatically
-    handles opening and closing the file.
+    handles opening and closing the file and cleanup of Java resources; but many usage
+    patterns *will* also require explicit open/close.
 
     BioFile instances are not thread-safe. Create separate instances per thread.
 
@@ -168,14 +169,8 @@ class BioFile(Sequence[Series]):
         self._finalizer: weakref.finalize | None = None
         self._suspended: bool = False
 
-    def java_reader(self) -> IFormatReader:
-        """Return the native reader object.
-
-        Raises
-        ------
-        RuntimeError
-            If file is not open
-        """
+    def _ensure_java_reader(self) -> IFormatReader:
+        """Return the native reader, raising if not open."""
         if self._java_reader is None or self._suspended:
             raise RuntimeError("File not open - call open() first")
         return self._java_reader
@@ -261,7 +256,7 @@ class BioFile(Sequence[Series]):
         RuntimeError
             If file is not open
         """
-        reader = self.java_reader()
+        reader = self._ensure_java_reader()
         meta = reader.getGlobalMetadata()
         return {str(k): jtype_to_python(v) for k, v in meta.items()}
 
@@ -486,7 +481,7 @@ class BioFile(Sequence[Series]):
             # Validate tile_size format
             if tile_size == "auto":
                 # Query Bio-Formats for optimal tile size
-                reader = self.java_reader()
+                reader = self._ensure_java_reader()
                 reader.setSeries(series)
                 reader.setResolution(resolution)
                 tile_size = (
@@ -526,7 +521,7 @@ class BioFile(Sequence[Series]):
     @property
     def ome_xml(self) -> str:
         """Return plain OME XML string."""
-        reader = self.java_reader()
+        reader = self._ensure_java_reader()
         if store := reader.getMetadataStore():
             try:
                 # get metadatastore can return various types of objects,
@@ -605,7 +600,7 @@ class BioFile(Sequence[Series]):
             If True, only return files that do not contain pixel data (e.g., metadata,
             companion files, etc...), by default `False`.
         """
-        return [str(x) for x in self.java_reader().getUsedFiles(metadata_only) or ()]
+        return [str(x) for x in self._ensure_java_reader().getUsedFiles(metadata_only) or ()]
 
     def lookup_table(self, series: int = 0) -> np.ndarray | None:
         """Return the color lookup table for an indexed-color series.
@@ -645,7 +640,7 @@ class BioFile(Sequence[Series]):
         if not self.core_metadata(series).is_indexed:
             return None
 
-        reader = self.java_reader()
+        reader = self._ensure_java_reader()
         reader.setSeries(series)
         # Many readers require at least one openBytes call before LUT is available
         reader.openBytes(0, 0, 0, 1, 1)
@@ -720,7 +715,7 @@ class BioFile(Sequence[Series]):
         as_array : Create a numpy-compatible lazy array
         to_dask : Create a dask array for lazy loading
         """
-        reader = self.java_reader()
+        reader = self._ensure_java_reader()
         reader.setSeries(series)
         reader.setResolution(resolution)
 

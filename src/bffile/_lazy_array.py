@@ -382,7 +382,7 @@ class LazyBioArray:
         # This is much faster than acquiring/releasing on every plane
         with self._biofile._lock:
             # Set series and resolution once at start (not on every iteration)
-            reader = self._biofile.java_reader()
+            reader = self._biofile._ensure_java_reader()
             reader.setSeries(self._series)
             reader.setResolution(self._resolution)
 

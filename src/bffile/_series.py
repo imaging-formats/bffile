@@ -160,6 +160,6 @@ class Series:
             If True, only return files that do not contain pixel data (e.g., metadata,
             companion files, etc...), by default `False`.
         """
-        reader = self._biofile.java_reader()
+        reader = self._biofile._ensure_java_reader()
         reader.setSeries(self._index)
         return [str(f) for f in reader.getSeriesUsedFiles(metadata_only) or ()]
