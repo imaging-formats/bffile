@@ -12,15 +12,17 @@ The simplest way to read an image is with [`imread`][bffile.imread]:
 ```python
 from bffile import imread
 
-data = imread("image.nd2", series=0)  # series=0 is the default
-
+data = imread("image.nd2")
 print(data.shape, data.dtype)
 # (10, 2, 5, 512, 512) uint16
+
+# or, to read a specific series/resolution-level:
+data = imread("image.nd2", series=1, resolution=0)
 ```
 
-This reads the first series into memory as a numpy array with shape `(T, C, Z,
-Y, X)`. For most other use cases, you'll want more control — that's
-where [`BioFile`][bffile.BioFile] comes in.
+This reads the specified series/resolution into memory as a numpy array with
+shape `(T, C, Z, Y, X)`. For most other use cases, you'll want more control —
+that's where [`BioFile`][bffile.BioFile] comes in.
 
 ## Opening Files with BioFile
 
@@ -46,6 +48,27 @@ bf.open()
 bf.close()
 ```
 
+### Understanding lifecycle
+
+`BioFile` does *not* attempt to magically open/close files when necessary,
+but it does expose methods (e.g., [`as_array()`](#reading-data-with-lazybioarray),
+[`dask_array()`](#using-dask-for-lazy-computation)) that return
+objects that require the file to be open when they are indexed or computed.
+The user is responsible for ensuring that the file is open while using
+those objects, and that it is properly closed when done.
+
+```python
+from bffile import BioFile
+
+with BioFile("image.nd2") as bf:
+    arr = bf.as_array()
+
+try:
+    arr[0, 0, 2]  # ERROR!!
+except RuntimeError as e:
+    print(e)  # "File not open - call open() first"
+```
+
 ## The Data Model
 
 Bio-Formats models files as a sequence of **series** (e.g., wells in a plate,
@@ -64,9 +87,25 @@ layers).
     └── ...
     ```
 
+### `bffile` is Stateless
+
+If you're familiar with the Bio-Formats Java API, you will be used
+to using `setSeries` to change the active series before following
+up with calls to read data or metadata.
+
+`bffile.BioFile` aims for a **stateless** API: all methods that pertain to
+a specific series or resolution level take an explicit
+`series` argument and an optional `resolution` level.  Omitting these
+arguments defaults to `series=0` and `resolution=0`.  As a convenience,
+`BioFile` also provides a [`Series`][bffile.Series] proxy object, described below.
+
 ### Accessing Series
 
-[`BioFile`][bffile.BioFile] implements `Sequence[Series]`, so you can
+A [`Series`][bffile.Series] object is a lightweight proxy that pre-fills
+the `series=` argument on all calls back to the parent
+[`BioFile`][bffile.BioFile]:
+
+[`BioFile`][bffile.BioFile] implements `Sequence[bffile.Series]`, so you can
 index, slice, and iterate:
 
 ```python
@@ -74,6 +113,11 @@ with BioFile("multi_scene.czi") as bf:
     print(len(bf))         # number of series
 
     s = bf[0]              # first series
+    print(s.shape)             # (10, 2, 5, 512, 512)
+    print(s.dtype)             # uint16
+    print(s.is_rgb)            # False
+    print(s.resolution_count)  # 1
+
     s = bf[-1]             # last series
     first_two = bf[0:2]    # slice returns list[Series]
 
@@ -81,41 +125,29 @@ with BioFile("multi_scene.czi") as bf:
         print(series.shape, series.dtype)
 ```
 
-A [`Series`][bffile.Series] object is a lightweight proxy that pre-fills
-the `series=` argument on all calls back to the parent
-[`BioFile`][bffile.BioFile]:
+`Series` objects also have methods that mirror those on `BioFile`, but with
+the `series` argument pre-filled:
 
 ```python
 with BioFile("image.nd2") as bf:
     s = bf[0]
-    print(s.shape)             # (10, 2, 5, 512, 512)
-    print(s.dtype)             # uint16
-    print(s.is_rgb)            # False
-    print(s.resolution_count)  # 1
-
     arr = s.as_array()         # same as bf.as_array(series=0)
     meta = s.core_metadata()   # same as bf.core_metadata(series=0)
 ```
 
 !!! danger "critical"
-    The `BioFile` must be open while you use any `Series` objects obtained
-    from it.  If you don't want to use the context manager, you should manage
-    the lifecycle explicitly with `open()` and `close()`.
-
-!!! tip "`bffile` is Stateless"
-    If you're familiar with the Bio-Formats Java API, you will be used
-    to using `setSeries` to change the active series before following
-    up with calls to read data or metadata.
-
-    `bffile.BioFile` aims for a **stateless** API: all methods take an explicit
-    `series` argument (or use the `Series` proxy), and an optional resolution
-    level.
+    The `BioFile` [must be open](#understanding-lifecycle) while you use
+    any `Series` objects obtained from it.  If you don't want to use the context
+    manager, you should manage the lifecycle explicitly with `open()` and
+    `close()`.
 
 ## Reading Data with LazyBioArray
 
 The recommended way to read pixel data is through
 [`LazyBioArray`][bffile.LazyBioArray], obtained via
-[`as_array()`][bffile.BioFile.as_array]:
+[`as_array()`][bffile.BioFile.as_array].  This object behaves like a numpy array
+but reads the minimal amount of data from disk when you index into it (including
+sub-plane/XY slicing).
 
 ```python
 with BioFile("image.nd2") as bf:
@@ -129,7 +161,7 @@ No data is loaded when you create the array. Data is read from disk
 
 ```python
 with BioFile("image.nd2") as bf:
-    arr = bf[0].as_array()
+    arr = bf[0].as_array()  # no reading yet!
 
     # read a single plane (t=0, c=0, z=2)
     plane = arr[0, 0, 2]              # shape: (512, 512)
@@ -146,7 +178,7 @@ with BioFile("image.nd2") as bf:
     full = arr[:]                      # shape: (10, 2, 5, 512, 512)
 ```
 
-### What indexing is supported?
+LazyBioArray supports:
 
 - **Integer indexing** squeezes that dimension: `arr[0, 0, 2]` returns
   shape `(Y, X)` instead of `(1, 1, 1, Y, X)`.
@@ -198,6 +230,14 @@ with BioFile("image.nd2") as bf:
     darr = bf.to_dask(chunks=(1, 1, 1, -1, -1))
     result = darr.mean(axis=2).compute()  # lazy z-projection
 ```
+
+You don't gain any *additional* data reading "laziness" here.  But you can use
+dask's rich ecosystem of chunked, parallelized computations and out-of-core
+algorithms on top of the lazy reading provided by `LazyBioArray`.
+
+!!! danger "File must be open"
+    Remember that the `BioFile` [must be open](#understanding-lifecycle)
+    when you `.compute()` the dask array.
 
 You can also use tile-based chunking for very large planes:
 
@@ -305,10 +345,10 @@ for reader in BioFile.list_available_readers():
 
 ## Environment Variables
 
-| Variable | Description |
-|---|---|
-| `BIOFORMATS_VERSION` | Bio-Formats version or Maven coordinate (e.g. `"7.0.0"` or `"ome:formats-gpl:7.0.0"`) |
-| `BIOFORMATS_MEMO_DIR` | Directory for `.bfmemo` cache files (default: same directory as the file) |
-| `BFF_JAVA_VERSION` | Java version to use (e.g. `17`, `21`) |
-| `BFF_JAVA_VENDOR` | Java vendor (e.g. `temurin`, `zulu-jre`) |
-| `BFF_JAVA_FETCH` | Java fetch behavior: `always`, `prefer`, or `never` |
+| <div style="width: 130px;">Variable</div> | Description | <div style="width: 170px;">Default</div> |
+| -------- | ----------- | ------- |
+| `BIOFORMATS_VERSION` | Bio-Formats version or full Maven coordinate (e.g. `"7.0.0"` or `"ome:formats-gpl:7.0.0"`) | `"ome:formats-gpl:RELEASE"` |
+| `BIOFORMATS_MEMO_DIR` | Directory for `.bfmemo` cache files | same as file |
+| `BFF_JAVA_VERSION` | Java version to use (e.g. `11`, `17`, `21`) | `11` |
+| `BFF_JAVA_VENDOR` | Java vendor (e.g. `zulu-jre`, `temurin`, `adoptium`) | `zulu-jre` |
+| `BFF_JAVA_FETCH` | Java fetch behavior: `always`, `never`, or `auto` (See [scyjava docs](https://github.com/scijava/scyjava?tab=readme-ov-file#bootstrap-a-java-installation)). | `always` |
