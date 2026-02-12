@@ -909,25 +909,6 @@ class BioFile(Sequence[Series]):
 
         return output
 
-    def _suspend_file(self) -> None:
-        """Close file handle but keep reader state (fast reopen).
-
-        This calls Bio-Formats' ``close(true)`` which releases the file
-        handle while preserving all metadata and reader state in memory.
-        Use ``_resume_file()`` to reopen cheaply.
-        """
-        if self._java_reader is not None:
-            self._java_reader.close(True)
-
-    def _resume_file(self) -> None:
-        """Reopen file handle after ``_suspend_file()``.
-
-        Calls Bio-Formats' ``reopenFile()`` to reacquire the file handle
-        without reinitializing the reader.
-        """
-        if self._java_reader is not None:
-            self._java_reader.reopenFile()
-
     _service: ClassVar[Any] = None
 
     @classmethod

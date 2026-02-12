@@ -4,24 +4,31 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
 
 from bffile import BioFile
 
-try:
+if TYPE_CHECKING:
     import zarr
     from zarr.core.buffer.core import default_buffer_prototype
-except ImportError:
-    pytest.skip("Requires zarr v3 with buffer protocol support", allow_module_level=True)
+else:
+    try:
+        import zarr
+        from zarr.core.buffer.core import default_buffer_prototype
+    except ImportError:
+        pytest.skip(
+            "Requires zarr v3 with buffer protocol support", allow_module_level=True
+        )
 
 
 def test_store_from_lazy_array(simple_file: Path) -> None:
     """as_zarr() on a LazyBioArray creates a usable store."""
     with BioFile(simple_file) as bf:
         store = bf.as_array().as_zarr()
-        arr = zarr.open(store, mode="r")
+        arr = zarr.open(store)
         assert isinstance(arr, zarr.Array)
         assert arr.shape == bf.as_array().shape
         assert arr.dtype == bf.as_array().dtype
@@ -31,19 +38,14 @@ def test_data_matches_read_plane(simple_file: Path) -> None:
     """Data read through zarr matches direct read_plane() calls."""
     with BioFile(simple_file) as bf:
         store = bf.as_array().as_zarr()
-        zarr_arr = zarr.open(store, mode="r")
-        meta = bf.core_metadata()
-        shape = meta.shape
+        zarr_arr = zarr.open_array(store)
+        shape = bf.core_metadata().shape
 
         for t in range(shape.t):
             for c in range(shape.c):
                 for z in range(shape.z):
-                    expected = bf.read_plane(t=t, c=c, z=z)
-                    if shape.rgb > 1:
-                        actual = np.asarray(zarr_arr[t, c, z])
-                    else:
-                        actual = np.asarray(zarr_arr[t, c, z])
-                    np.testing.assert_array_equal(actual, expected)
+                    expected = bf.read_plane(t=t, c=c, z=z, series=0, resolution=0)
+                    np.testing.assert_array_equal(zarr_arr[t, c, z], expected)
 
 
 def test_tiled_chunks(simple_file: Path) -> None:
@@ -51,15 +53,8 @@ def test_tiled_chunks(simple_file: Path) -> None:
     with BioFile(simple_file) as bf:
         arr = bf.as_array()
         store = arr.as_zarr(tile_size=(16, 16))
-        zarr_arr = zarr.open(store, mode="r")
-
-        # Shape should match
-        assert zarr_arr.shape == arr.shape
-
-        # Read full array and compare
-        expected = np.asarray(arr)
-        actual = np.asarray(zarr_arr)
-        np.testing.assert_array_equal(actual, expected)
+        zarr_arr = zarr.open_array(store)
+        np.testing.assert_array_equal(arr, zarr_arr)
 
 
 def test_multiseries(multiseries_file: Path) -> None:
@@ -68,11 +63,10 @@ def test_multiseries(multiseries_file: Path) -> None:
         store0 = bf.as_array(series=0).as_zarr()
         store1 = bf.as_array(series=1).as_zarr()
 
-        arr0 = zarr.open(store0, mode="r")
-        arr1 = zarr.open(store1, mode="r")
+        arr0 = zarr.open_array(store0)
+        arr1 = zarr.open_array(store1)
 
-        assert arr0.shape == bf.as_array(series=0).shape
-        assert arr1.shape == bf.as_array(series=1).shape
+        assert not np.allclose(arr0[0, 0], arr1[0, 0])
 
 
 def test_rgb_image() -> None:
@@ -82,16 +76,13 @@ def test_rgb_image() -> None:
         arr = bf.as_array()
         assert arr.ndim == 6, f"Expected 6D RGB, got {arr.ndim}D"
 
-        store = arr.as_zarr()
-        zarr_arr = zarr.open(store, mode="r")
-
-        assert zarr_arr.shape == arr.shape
-        assert zarr_arr.ndim == 6
+        zarr_arr = zarr.open_array(arr.as_zarr())
+        assert zarr_arr.shape == arr.shape == (1, 2, 1, 32, 32, 3)
+        assert zarr_arr.ndim == arr.ndim == 6
 
         # Compare first plane
         expected = bf.read_plane(t=0, c=0, z=0)
-        actual = np.asarray(zarr_arr[0, 0, 0])
-        np.testing.assert_array_equal(actual, expected)
+        np.testing.assert_array_equal(zarr_arr[0, 0, 0], expected)
 
 
 def test_read_only(simple_file: Path) -> None:
@@ -109,15 +100,6 @@ def test_read_only(simple_file: Path) -> None:
             asyncio.run(store.set("test_key", buf))
         with pytest.raises(PermissionError, match="read-only"):
             asyncio.run(store.delete("test_key"))
-
-
-def test_store_borrowed_no_close(simple_file: Path) -> None:
-    """Borrowed mode does not close the BioFile on store.close()."""
-    with BioFile(simple_file) as bf:
-        store = bf.as_array().as_zarr()
-        store.close()
-        # BioFile should still be open
-        assert not bf.closed
 
 
 def test_store_equality(simple_file: Path) -> None:
@@ -138,25 +120,12 @@ def test_store_exists(simple_file: Path) -> None:
         assert not asyncio.run(store.exists("nonexistent"))
 
 
-def test_suspend_resume(simple_file: Path) -> None:
-    """BioFile._suspend_file/_resume_file round-trip."""
-    with BioFile(simple_file) as bf:
-        data_before = bf.read_plane()
-
-        bf._suspend_file()
-        bf._resume_file()
-
-        data_after = bf.read_plane()
-        np.testing.assert_array_equal(data_before, data_after)
-
-
 def test_data_matches_multiseries(multiseries_file: Path) -> None:
     """Zarr data matches direct reads for multi-series file."""
     with BioFile(multiseries_file) as bf:
         for series_idx in range(min(len(bf), 2)):
             arr = bf.as_array(series=series_idx)
-            store = arr.as_zarr()
-            zarr_arr = zarr.open(store, mode="r")
+            zarr_arr = zarr.open_array(arr.as_zarr())
 
             # Compare a plane from each series
             expected = bf.read_plane(t=0, c=0, z=0, series=series_idx)

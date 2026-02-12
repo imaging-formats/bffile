@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 from zarr.abc.store import (
@@ -309,6 +309,21 @@ class BioFormatsStore(Store):
             f"BioFormatsStore({self._biofile.filename!r}, "
             f"series={arr._series}, shape={arr.shape})"
         )
+
+    # ------------------------------------------------------------------
+    # These are removed from the Store ABC ... just here in the off chance that someone
+    # installs zarr 3.1
+
+    def set_partial_values(  # pragma: no cover
+        self,
+        prototype: BufferPrototype,
+        key_value_ranges: Iterable[tuple[str, Buffer, ByteRequest | None]],
+    ) -> AsyncIterator[None]:
+        raise PermissionError("BioFormatsStore is read-only")
+
+    @property
+    def supports_partial_writes(self) -> Literal[False]:  # pragma: no cover
+        return False
 
 
 def _apply_byte_range(data: bytes, byte_range: ByteRequest) -> bytes:
