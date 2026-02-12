@@ -117,39 +117,34 @@ read more data later.
 
 !!! note "Memoization"
 
-    The `memoize` parameter controls whether the initialized reader state is
-    cached to a `.bfmemo` file on disk. This only affects the
-    `UNINITIALIZED → OPEN` transition (i.e., when the java reader is fully initialized from scratch).
+    **Memoization speeds up *future* calls to `open()`, from an uninitialized
+    state, even across different Python sessions.**
+
+    The [`memoize`][bffile.BioFile] parameter controls whether the
+    initialized reader state is cached to a `.bfmemo` file *on disk*. This can
+    improve performance for the `UNINITIALIZED → OPEN` transition (i.e., when the
+    java reader is fully initialized from scratch) for *subsequent* reads of the
+    same file in a new Python session, or after `destroy()` has been called.
 
     ```python
     # First open: full init + saves .bfmemo file to disk
     # Subsequent opens: loads from .bfmemo instead of re-parsing
     with BioFile("image.nd2", memoize=True) as bf:
-        data = bf.read_plane()
+        ...
+
+    # Faster this time because it loads the .bfmemo file instead of re-parsing
+    with BioFile("image.nd2", memoize=True) as bf:
+        ...
     ```
 
-    The `memoize` value is a threshold in milliseconds — if `setId()` takes
-    longer than this, the reader state is serialized. `memoize=True` (same
-    as `memoize=1`) means "always memoize".
+    You *must* have `memoize=True` on both the initial open and subsequent
+    opens for this to work.
 
-    !!! note "Memoization vs suspend/resume"
-        Memoization and the `close()`/`open()` suspend/resume cycle solve
-        different problems:
-
-        - **Memoization** speeds up the *first* `open()` call in a new
-        Python session by caching the parsed reader state to disk.
-        Useful for large files where `setId()` is expensive.
-        - **Suspend/resume** (`close()` + `open()`) keeps the parsed state
-        *in memory* and just releases/reacquires the file handle.
-        Much faster (~0.3ms vs ~70ms), but only works within the same
-        `BioFile` instance.
-
-        The suspend/resume path does **not** involve the Memoizer at all —
-        no `.bfmemo` file is read or written.
-
-    By default, `.bfmemo` files are written next to the source file. Set
-    the `BIOFORMATS_MEMO_DIR` environment variable to use a different
-    directory.
+    !!! info "BIOFORMATS_MEMO_DIR"
+        By default, the `.bfmemo` file is saved in the same directory as the
+        original image. You must have write permission to this directory.
+        You can change this with the `BIOFORMATS_MEMO_DIR` [environment
+        variable](#environment-variables).
 
 ## The Series Data Model
 
