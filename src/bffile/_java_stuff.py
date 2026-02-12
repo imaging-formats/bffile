@@ -17,7 +17,7 @@ MAVEN_COORDINATE = "ome:formats-gpl:RELEASE"
 # Configure Java constraints from environment variables
 # BFF_JAVA_VENDOR: Java vendor (e.g., "zulu-jre", "adoptium", "temurin")
 # BFF_JAVA_VERSION: Java version (e.g., "11", "17", "21")
-# BFF_JAVA_FETCH: Fetch mode ("always", "prefer", "never", default is auto)
+# BFF_JAVA_FETCH: Fetch mode ("always", "never", "auto", default is "always")
 _bff_vendor = os.getenv("BFF_JAVA_VENDOR") or None
 _bff_version = os.getenv("BFF_JAVA_VERSION") or None
 _bff_fetch = os.getenv("BFF_JAVA_FETCH") or None

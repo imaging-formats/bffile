@@ -24,7 +24,7 @@ class OMEShape(NamedTuple):
 
     @property
     def as_array_shape(self) -> tuple[int, ...]:
-        """Return 5-tuple (T,C,Z,Y,X) if rgb==1, else 6-tuple."""
+        """Return 5-tuple `(T,C,Z,Y,X)` if `rgb==1`, else 6-tuple `(T,C,Z,Y,X,RGB)`."""
         if self.rgb > 1:
             return (self.t, self.c, self.z, self.y, self.x, self.rgb)
         return (self.t, self.c, self.z, self.y, self.x)
@@ -56,6 +56,8 @@ def pixtype2dtype(pixeltype: int, little_endian: bool) -> np.dtype:
 
 @dataclass
 class CoreMetadata:
+    """Core metadata for a single series."""
+
     dtype: np.dtype
     shape: OMEShape
     rgb_count: int = 0
