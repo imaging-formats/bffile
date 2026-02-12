@@ -6,7 +6,11 @@
 [![CI](https://github.com/imaging-formats/bffile/actions/workflows/ci.yml/badge.svg)](https://github.com/imaging-formats/bffile/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/imaging-formats/bffile/branch/main/graph/badge.svg)](https://codecov.io/gh/imaging-formats/bffile)
 
-Yet another Bio-Formats wrapper for python
+Modern Bio-Formats wrapper for python
+
+### Documentation 📖
+
+<https://imaging-formats.github.io/bffile/>
 
 ## Installation
 
