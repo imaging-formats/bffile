@@ -24,38 +24,118 @@ This reads the specified series/resolution into memory as a numpy array with
 shape `(T, C, Z, Y, X)`. For most other use cases, you'll want more control —
 that's where [`BioFile`][bffile.BioFile] comes in.
 
-## Opening Files with BioFile
-
-[`BioFile`][bffile.BioFile] is the main entry point. Use it as a context
-manager:
-
 ```python
 from bffile import BioFile
 
 with BioFile("image.nd2") as bf:
-    print(bf)  # BioFile('image.nd2', 3 series)
-    arr = bf.as_array()
+    arr = bf.as_array()   # lazy array accessor
     plane = arr[0, 0, 2]  # read a single plane from disk
 ```
 
-The file is opened on entry and closed on exit. You can also manage the
-lifecycle explicitly if needed:
+## Opening Files with BioFile
+
+[`BioFile`][bffile.BioFile] manages the lifecycle of the underlying Java reader and the
+associated file handle. The recommended pattern is a context manager:
+
+```python
+with BioFile("image.nd2") as bf:
+    data = bf.read_plane()
+# reader fully cleaned up here
+```
+
+You can also manage the lifecycle explicitly:
 
 ```python
 bf = BioFile("image.nd2")
 bf.open()
 # ... use bf ...
-bf.close()
+bf.close()    # release file handle (fast reopen later)
+bf.open()     # cheap — just reacquires the file handle
+# ... use bf again ...
+bf.destroy()  # full cleanup (or let GC handle it)
 ```
 
 ### Understanding lifecycle
 
-`BioFile` does *not* attempt to magically open/close files when necessary,
-but it does expose methods (e.g., [`as_array()`](#reading-data-with-lazybioarray),
-[`dask_array()`](#using-dask-for-lazy-computation)) that return
-objects that require the file to be open when they are indexed or computed.
-The user is responsible for ensuring that the file is open while using
-those objects, and that it is properly closed when done.
+`BioFile` has three states:
+
+1. `UNINITIALIZED`: The Python `BioFile` object exists, but the file handle is not open, and no Java resources are allocated.
+2. `OPEN`: The file is open and the Java reader is initialized. You can read data and metadata.
+3. `SUSPENDED`: The file handle is released but the Java reader and all parsed metadata remain in memory. You cannot read data, but you can still access metadata.  Re-opening the file from this state is fast.
+
+``` mermaid
+---
+title: BioFile Lifecycle
+---
+stateDiagram-v2
+    direction LR
+    [*] --> UNINITIALIZED : <code>\_\_init__()</code>
+    UNINITIALIZED --> OPEN : <code>open()</code>
+    OPEN --> SUSPENDED : <code>close()</code>
+    SUSPENDED --> OPEN : <code>open()</code>
+    OPEN --> UNINITIALIZED : <code>destroy()</code>
+    SUSPENDED --> UNINITIALIZED : <code>destroy()</code>
+```
+
+| Transition | What happens |
+| --- | --- |
+| `__init__()` | Creates the `BioFile` object but does not open the file or initialize the reader. |
+| `open()` (first call) | Full initialization — format detection, header parsing (`setId` in Java). Slow. |
+| `close()` | Releases the OS file handle but keeps all parsed state in memory. |
+| `open()` (after `close()`) | Just reopens the file handle (`reopenFile` in Java). Fast. |
+| `destroy()` / `__exit__()` | Full teardown — Java reader and all cached state released. |
+
+`close()` is lightweight: metadata (via `core_metadata()`, `len()`,
+etc.) remains accessible while the file handle is released. This is
+useful when you want to avoid holding file descriptors open but plan to
+read more data later.
+
+!!! tip "Context manager vs explicit close"
+    The context manager (`with`) calls `destroy()` on exit — full cleanup.
+    If you want the fast-reopen behavior, use explicit `open()` / `close()`
+    calls instead.
+
+### Memoization
+
+The `memoize` parameter controls whether the initialized reader state is
+cached to a `.bfmemo` file on disk. This only affects the
+**UNINITIALIZED → OPEN** transition (i.e., when `setId()` is called):
+
+```python
+# First open: full init + saves .bfmemo file to disk
+# Subsequent opens: loads from .bfmemo instead of re-parsing
+with BioFile("image.nd2", memoize=True) as bf:
+    data = bf.read_plane()
+```
+
+The `memoize` value is a threshold in milliseconds — if `setId()` takes
+longer than this, the reader state is serialized. `memoize=True` (same
+as `memoize=1`) means "always memoize".
+
+!!! note "Memoization vs suspend/resume"
+    Memoization and the `close()`/`open()` suspend/resume cycle solve
+    different problems:
+
+    - **Memoization** speeds up the *first* `open()` call in a new
+      Python session by caching the parsed reader state to disk.
+      Useful for large files where `setId()` is expensive.
+    - **Suspend/resume** (`close()` + `open()`) keeps the parsed state
+      *in memory* and just releases/reacquires the file handle.
+      Much faster (~0.3ms vs ~70ms), but only works within the same
+      `BioFile` instance.
+
+    The suspend/resume path does **not** involve the Memoizer at all —
+    no `.bfmemo` file is read or written.
+
+By default, `.bfmemo` files are written next to the source file. Set
+the `BIOFORMATS_MEMO_DIR` environment variable to use a different
+directory.
+
+`BioFile` does *not* attempt to magically open/close files for you.
+Methods like [`as_array()`](#reading-data-with-lazybioarray) and
+[`to_dask()`](#using-dask-for-lazy-computation) return objects that
+require the file to be open when indexed or computed. You are
+responsible for ensuring the file is open while using those objects.
 
 ```python
 from bffile import BioFile

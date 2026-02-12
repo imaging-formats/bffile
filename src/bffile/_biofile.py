@@ -98,9 +98,9 @@ class BioFile(Sequence[Series]):
     BioFile manages the underlying Java reader through three states:
 
         UNINITIALIZED ── open() ──> OPEN ── close() ──> SUSPENDED
-             ^    ^                  |  ^                    |
-             |    └── destroy() ────-┘  └──── open() ──────-┘
-             └──────── destroy() ───────────────────────────┘
+             ^    ^                  | ^                     |
+             |    └── destroy() ─────┘ └──── open() ─────────┘
+             └─────── destroy() ─────────────────────────────┘
 
     - `open()` first call: full initialization via `setId()` (slow).
     - `open()` after `close()`: fast reopen via `reopenFile()`.
