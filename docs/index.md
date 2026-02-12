@@ -11,8 +11,9 @@ It exposes the full power of Bio-Formats in a clean Pythonic API
 backed by lazy data access.
 
 **No special environment setup is required**, thanks to
-[`scyjava`](https://github.com/scijava/scyjava) and
-[`jgo`](https://github.com/apposed/jgo) and
+[`scyjava`](https://github.com/scijava/scyjava),
+[`jgo`](https://github.com/apposed/jgo),
+[`jpype`](https://github.com/jpype-project/jpype), and
 [`cjdk`](https://github.com/cachedjdk/cjdk):  
 just `pip install bffile` and you're ready to go.
 
