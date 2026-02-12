@@ -7,7 +7,7 @@ repo_url = "https://github.com/tlambert03/bffile"
 copyright = ""
 
 nav = [
-    { Home = "index.md" },
+    { Quickstart = "index.md" },
     { Usage = "usage.md" },
     { "API Reference" = "api.md" },
 ]
