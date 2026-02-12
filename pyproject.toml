@@ -39,8 +39,8 @@ dependencies = [
 ]
 
 [project.urls]
-homepage = "https://github.com/tlambert03/bffile"
-repository = "https://github.com/tlambert03/bffile"
+homepage = "https://github.com/imaging-formats/bffile"
+repository = "https://github.com/imaging-formats/bffile"
 
 [project.optional-dependencies]
 dask = ["dask[array]>=2024.11.0"]

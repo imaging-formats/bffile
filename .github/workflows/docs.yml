@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    if: ${{ github.repository == 'tlambert03/bffile' }}
+    if: ${{ github.repository == 'imaging-formats/bffile' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

@@ -1,9 +1,9 @@
 [project]
 site_name = "bffile"
 site_description = "Unified APIs for streaming frames to OME-TIFF and OME-ZARR."
-site_url = "https://tlambert03.github.io/bffile/"
-repo_name = "tlambert03/bffile"
-repo_url = "https://github.com/tlambert03/bffile"
+site_url = "http://imaging-formats.github.io/bffile/"
+repo_name = "imaging-formats/bffile"
+repo_url = "https://github.com/imaging-formats/bffile"
 copyright = ""
 
 nav = [
