@@ -12,11 +12,9 @@ from ._core_metadata import CoreMetadata, OMEShape
 from ._imread import imread, open_zarr
 from ._lazy_array import LazyBioArray
 from ._series import Series
-from ._zarr_group_store import BioFormatsGroupStore
 
 __all__ = [
     "BioFile",
-    "BioFormatsGroupStore",
     "CoreMetadata",
     "LazyBioArray",
     "OMEShape",

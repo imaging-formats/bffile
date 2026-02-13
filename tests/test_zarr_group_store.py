@@ -13,6 +13,8 @@ from bffile import BioFile
 if TYPE_CHECKING:
     from pathlib import Path
 
+pytest.importorskip("zarr", reason="Requires zarr v3 with buffer protocol support")
+
 
 def test_as_zarr_group_basic(simple_file: Path) -> None:
     """Test basic group store creation."""
