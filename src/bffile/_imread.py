@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ._biofile import BioFile
+
 if TYPE_CHECKING:
     from pathlib import Path
 
     import numpy as np
-
-from ._biofile import BioFile
+    import zarr
 
 
 def imread(path: str | Path, *, series: int = 0, resolution: int = 0) -> np.ndarray:
@@ -51,3 +52,41 @@ def imread(path: str | Path, *, series: int = 0, resolution: int = 0) -> np.ndar
     with BioFile(path) as bf:
         arr = bf.as_array(series=series, resolution=resolution)
         return arr[:]
+
+
+# TODO
+# @overload
+# def open_zarr(
+#     path: str | Path,
+#     *,
+#     series: Literal[None] = ...,
+#     resolution: Literal[None] = ...,
+#     open_zarr: Literal[True],
+# ) -> zarr.Group: ...
+# @overload
+# def open_zarr(
+#     path: str | Path,
+#     *,
+#     series: int,
+#     resolution: int = 0,
+#     open_zarr: Literal[True],
+# ) -> zarr.Array: ...
+def open_zarr(
+    path: str | Path, *, series: int | None, resolution: int = 0
+) -> zarr.Array | zarr.Group:
+    """Read image data from a Bio-Formats-supported file as a zarr array."""
+    try:
+        import zarr
+    except ImportError:
+        raise ImportError("zarr must be installed to use open_zarr") from None
+
+    if series is None:
+        raise NotImplementedError(
+            "open_zarr with series=None (all series in a group) is not yet implemented"
+        )
+
+    bf = BioFile(path).open()
+    arr = bf.as_array(series=series, resolution=resolution)
+    zarr_array = zarr.open_array(arr.zarr_store())
+    bf.close()
+    return zarr_array

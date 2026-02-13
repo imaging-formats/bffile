@@ -84,7 +84,7 @@ class LazyBioArray:
 
         # Get metadata directly from the 2D list (stateless!)
         # This avoids hidden dependency on biofile's current state
-        meta = biofile.core_metadata(series, resolution)
+        self._meta = meta = biofile.core_metadata(series, resolution)
 
         # Follow same logic as to_numpy(): only include RGB dimension if > 1
         self._shape = meta.shape.as_array_shape
@@ -120,7 +120,9 @@ class LazyBioArray:
         """True if image has RGB/RGBA components (ndim == 6)."""
         return self.ndim == 6
 
-    def as_zarr(self, *, tile_size: tuple[int, int] | None = None) -> BioFormatsStore:
+    def zarr_store(
+        self, *, tile_size: tuple[int, int] | None = None
+    ) -> BioFormatsStore:
         """Create a read-only zarr v3 store backed by this array.
 
         Each zarr chunk maps to a single ``read_plane()`` call. Requires

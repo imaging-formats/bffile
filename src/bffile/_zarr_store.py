@@ -66,6 +66,7 @@ class BioFormatsStore(Store):
         if not isinstance(obj, LazyBioArray):
             raise TypeError("BioFormatsStore requires a LazyBioArray as input")
         self._lazy_array = obj
+        self._meta = obj._meta
         self._tile_size = tile_size
         self._metadata_bytes: bytes | None = None
         self._chunk_keys: set[str] | None = None
@@ -84,8 +85,7 @@ class BioFormatsStore(Store):
         if self._metadata_bytes is not None:
             return self._metadata_bytes
 
-        arr = self._lazy_array
-        meta = self._biofile.core_metadata(arr._series, arr._resolution)
+        meta = self._meta
         shape = meta.shape
 
         array_shape = list(shape.as_array_shape)
@@ -127,9 +127,7 @@ class BioFormatsStore(Store):
         if self._chunk_keys is not None:
             return self._chunk_keys
 
-        arr = self._lazy_array
-        meta = self._biofile.core_metadata(arr._series, arr._resolution)
-        shape = meta.shape
+        shape = self._meta.shape
 
         if self._tile_size is not None:
             ty, tx = self._tile_size
@@ -164,8 +162,7 @@ class BioFormatsStore(Store):
         )
 
         arr = self._lazy_array
-        meta = self._biofile.core_metadata(arr._series, arr._resolution)
-        shape = meta.shape
+        shape = self._meta.shape
 
         if self._tile_size is not None:
             ty, tx = self._tile_size
@@ -194,9 +191,9 @@ class BioFormatsStore(Store):
             actual_w = x_stop - x_start
             if actual_h < ty or actual_w < tx:
                 if shape.rgb > 1:
-                    padded = np.zeros((ty, tx, shape.rgb), dtype=meta.dtype)
+                    padded = np.zeros((ty, tx, shape.rgb), dtype=self._meta.dtype)
                 else:
-                    padded = np.zeros((ty, tx), dtype=meta.dtype)
+                    padded = np.zeros((ty, tx), dtype=self._meta.dtype)
                 padded[:actual_h, :actual_w] = plane
                 plane = padded
 
@@ -226,7 +223,8 @@ class BioFormatsStore(Store):
         if key == "zarr.json":
             data = self._build_metadata()
         elif key in self._get_chunk_keys():
-            data = self._read_chunk(key)
+            with self._biofile.ensure_open():
+                data = self._read_chunk(key)
         else:
             return None
 

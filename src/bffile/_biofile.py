@@ -5,7 +5,7 @@ import sys
 import warnings
 import weakref
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
+from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -25,6 +25,7 @@ from ._jimports import jimport
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from types import TracebackType
 
     import dask.array
     import java.lang
@@ -170,7 +171,7 @@ class BioFile(Sequence[Series]):
 
     def _ensure_java_reader(self) -> IFormatReader:
         """Return the native reader, raising if not open."""
-        if self._java_reader is None or self._suspended:
+        if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
         return self._java_reader
 
@@ -268,13 +269,25 @@ class BioFile(Sequence[Series]):
 
         Safe to call multiple times — no-op if already open.
 
-        !!! tip "Returns self"
-            This method returns `self`, so you can chain it directly after the
-            constructor if you prefer that style:
+        Returns
+        -------
+        Self
+            Returns `self` for method chaining.
 
-            ```python
-            bf = BioFile(path).open()
-            ```
+        Examples
+        --------
+        ```python
+        # Method chaining
+        bf = BioFile(path).open()
+
+        # Or two lines
+        bf = BioFile(path)
+        bf.open()
+        ```
+
+        See Also
+        --------
+        ensure_open : Context manager that restores previous state on exit
         """
         with self._lock:
             if self._java_reader is not None and not self._suspended:
@@ -324,6 +337,40 @@ class BioFile(Sequence[Series]):
             self._core_meta_list = core_meta
             self._finalizer = weakref.finalize(self, _close_java_reader, r)
         return self
+
+    def ensure_open(self) -> _EnsureOpenContext:
+        """Context manager that temporarily opens the file if closed.
+
+        Opens the file if needed, then on exit: suspends if it started closed
+        (uninitialized or suspended), or leaves open if it started open. This
+        allows temporary access without disrupting the caller's file state.
+
+        Note: "closed" encompasses both uninitialized and suspended states.
+        Files starting uninitialized will end suspended (not destroyed).
+
+        Returns
+        -------
+        _EnsureOpenContext
+            Context manager that restores open/closed state on exit.
+
+        Examples
+        --------
+        ```python
+        bf = BioFile(path)
+
+        # Started uninitialized -> ends suspended
+        with bf.ensure_open():
+            data = bf.read_plane()
+        assert bf.suspended  # not destroyed
+
+        # Started open -> stays open
+        bf.open()
+        with bf.ensure_open():
+            data = bf.read_plane()
+        assert not bf.closed
+        ```
+        """
+        return _EnsureOpenContext(self, close_on_exit=self.closed)
 
     def close(self) -> None:
         """Close file handles while preserving reader state for fast reopen.
@@ -409,9 +456,6 @@ class BioFile(Sequence[Series]):
 
         Planes >2GB automatically use tiled reading (transparent, ~20% slower).
         """
-        if self.closed:
-            raise RuntimeError("File not open - call open() first")
-
         from bffile._lazy_array import LazyBioArray
 
         return LazyBioArray(self, series, resolution)
@@ -518,8 +562,19 @@ class BioFile(Sequence[Series]):
 
     @property
     def closed(self) -> bool:
-        """Whether the underlying file handles are currently closed."""
+        """Return True if the file is currently closed (uninitialized or suspended)."""
         return self._java_reader is None or self._suspended
+
+    @property
+    def suspended(self) -> bool:
+        """Return True if the file is currently suspended (closed but not destroyed).
+
+        "Suspended" means:
+        - we have previously opened the file and parsed the metadata
+        - we retain the initialized Java reader and its state in the JVM
+        - but we have released the file handles to free up system resources
+        """
+        return self._java_reader is not None and self._suspended
 
     @property
     def filename(self) -> str:
@@ -1009,3 +1064,31 @@ def _close_java_reader(java_reader: IFormatReader | None) -> None:
         return  # pragma: no cover
     with suppress(Exception):
         java_reader.close()
+
+
+class _EnsureOpenContext(AbstractContextManager[BioFile]):
+    """A context manager that ensures BioFile is open and restores state on exit.
+
+    Unlike BioFile.__enter__/__exit__ which destroys on exit, this context manager
+    ensures the file is open for the duration of the block, then restores it to
+    whatever state it was in before (open or closed).
+    """
+
+    def __init__(self, biofile: BioFile, close_on_exit: bool) -> None:
+        self.biofile = biofile
+        self.close_on_exit = close_on_exit
+
+    def __enter__(self) -> BioFile:
+        if self.biofile.closed:
+            self.biofile.open()
+        return self.biofile
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> Any:
+        if self.close_on_exit:
+            self.biofile.close()
