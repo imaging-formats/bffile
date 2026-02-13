@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from bffile._lazy_array import LazyBioArray
+    from bffile._zarr_group_store import BioFormatsGroupStore
 
 
 @dataclass(frozen=True)
@@ -459,6 +460,72 @@ class BioFile(Sequence[Series]):
         from bffile._lazy_array import LazyBioArray
 
         return LazyBioArray(self, series, resolution)
+
+    def as_zarr_group(
+        self,
+        *,
+        tile_size: tuple[int, int] | None = None,
+    ) -> BioFormatsGroupStore:
+        """Return a zarr v3 group store containing all series and resolutions.
+
+        Creates an OME-ZARR group structure following NGFF v0.5 specification,
+        with full hierarchy including all series and resolution levels. Useful
+        for tools like napari that expect complete OME-ZARR groups.
+
+        Directory structure::
+
+            root/
+            ├── zarr.json (group metadata)
+            ├── OME/
+            │   ├── zarr.json (series list)
+            │   └── METADATA.ome.xml (raw OME-XML)
+            ├── 0/ (series 0 - multiscales group)
+            │   ├── zarr.json (multiscales metadata with axes/datasets)
+            │   ├── 0/ (full resolution)
+            │   │   ├── zarr.json (array metadata)
+            │   │   └── c/... (chunk data)
+            │   └── 1/ (downsampled, if exists)
+            └── 1/ (series 1, if exists)
+
+        Parameters
+        ----------
+        tile_size : tuple[int, int], optional
+            If provided, Y and X are chunked into tiles of this size instead of
+            full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``.
+
+        Returns
+        -------
+        BioFormatsGroupStore
+            Read-only zarr v3 Store containing the full file hierarchy.
+
+        Examples
+        --------
+        Open as zarr group and access arrays:
+
+        >>> import zarr
+        >>> with BioFile("image.nd2") as bf:
+        ...     group = zarr.open_group(bf.as_zarr_group(), mode="r")
+        ...     # Access first series, full resolution
+        ...     arr = group["0/0"]
+        ...     data = arr[0, 0, 0]
+        ...
+        ...     # Check multiscales metadata
+        ...     print(group["0"].attrs["ome"]["multiscales"])
+        ...
+        ...     # Save to disk
+        ...     bf.as_zarr_group().save("output.ome.zarr")
+
+        Notes
+        -----
+        - BioFile must remain open while using the store
+        - For single array access, prefer `as_array().zarr_store()` (simpler)
+        - This creates the full hierarchy needed for multi-series/multi-resolution
+          visualization tools
+        - Conforms to NGFF v0.5 specification
+        """
+        from bffile._zarr_group_store import BioFormatsGroupStore
+
+        return BioFormatsGroupStore(self, tile_size=tile_size)
 
     def to_dask(
         self,

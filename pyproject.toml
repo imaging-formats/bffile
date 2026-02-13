@@ -65,6 +65,7 @@ dev = [
     "rich>=14.0.0",
     "ruff>=0.11.6",
     "types-requests>=2.32.0.20250328",
+    "yaozarrs[io]>=0.2.2",
 ]
 docs = [
     "griffe-fieldz>=0.4.0",

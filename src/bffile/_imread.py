@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, overload
 
 from ._biofile import BioFile
 
@@ -54,39 +54,66 @@ def imread(path: str | Path, *, series: int = 0, resolution: int = 0) -> np.ndar
         return arr[:]
 
 
-# TODO
-# @overload
-# def open_zarr(
-#     path: str | Path,
-#     *,
-#     series: Literal[None] = ...,
-#     resolution: Literal[None] = ...,
-#     open_zarr: Literal[True],
-# ) -> zarr.Group: ...
-# @overload
-# def open_zarr(
-#     path: str | Path,
-#     *,
-#     series: int,
-#     resolution: int = 0,
-#     open_zarr: Literal[True],
-# ) -> zarr.Array: ...
+@overload
 def open_zarr(
-    path: str | Path, *, series: int | None, resolution: int = 0
+    path: str | Path,
+    *,
+    series: Literal[None] = ...,
+) -> zarr.Group: ...
+@overload
+def open_zarr(
+    path: str | Path,
+    *,
+    series: int,
+    resolution: int = 0,
+) -> zarr.Array: ...
+def open_zarr(
+    path: str | Path, *, series: int | None = None, resolution: int = 0
 ) -> zarr.Array | zarr.Group:
-    """Read image data from a Bio-Formats-supported file as a zarr array."""
+    """Read image data from a Bio-Formats-supported file as a zarr array or group.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the image file
+    series : int or None, optional
+        Series index to read. If `None` (default), returns an OME `zarr.Group` following
+        the [bf2raw](https://ngff.openmicroscopy.org/0.5/index.html#bf2raw) transitional
+        layout with all series. If an int, returns a `zarr.Array` for the specified
+        series and resolution level.
+    resolution : int, optional
+        Resolution level (0 = full resolution), by default 0.
+        Only used when series is an int.
+
+    Returns
+    -------
+    zarr.Array or zarr.Group
+        If series is None: zarr Group with full OME-ZARR hierarchy
+        If series is int: zarr Array for the specified series
+
+    Examples
+    --------
+    Open a single series as an array:
+
+    >>> zarr_array = open_zarr("image.nd2", series=0)
+    >>> data = zarr_array[0, 0, 0]
+
+    Open all series as a group:
+
+    >>> zarr_group = open_zarr("image.nd2")
+    >>> # Access first series, full resolution
+    >>> arr = zarr_group["0/0"]
+    >>> data = arr[0, 0, 0]
+    """
     try:
         import zarr
     except ImportError:
         raise ImportError("zarr must be installed to use open_zarr") from None
 
-    if series is None:
-        raise NotImplementedError(
-            "open_zarr with series=None (all series in a group) is not yet implemented"
-        )
+    with BioFile(path).ensure_open() as bf:
+        if series is None:
+            store = bf.as_zarr_group()
+        else:
+            store = bf.as_array(series=series, resolution=resolution).zarr_store()
 
-    bf = BioFile(path).open()
-    arr = bf.as_array(series=series, resolution=resolution)
-    zarr_array = zarr.open_array(arr.zarr_store())
-    bf.close()
-    return zarr_array
+    return zarr.open(store, mode="r")
