@@ -259,8 +259,13 @@ def test_tile_height_calculation(simple_file: Path) -> None:
         assert tile_height >= 1
 
 
-def test_tiled_vs_direct_read_consistency(simple_file: Path) -> None:
-    """Test that tiled reads produce same results as direct reads."""
+def test_tiled_vs_direct_read_consistency(simple_file: Path, monkeypatch) -> None:
+    """Test that tiled reads produce same results as direct reads.
+    
+    Monkeypatch the MAX_JAVA_ARRAY_SIZE to a smaller value to force multiple tiles for small sample.
+    """
+    import bffile._biofile as _biofile
+    monkeypatch.setattr(_biofile, "MAX_JAVA_ARRAY_SIZE", 2**16)
     with BioFile(simple_file) as bf:
         reader = bf._ensure_java_reader()
         meta = bf.core_metadata(0, 0)
