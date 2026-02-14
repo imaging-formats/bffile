@@ -340,28 +340,24 @@ class BFOmeZarrStore(ReadOnlyStore):
         if (parsed := ParsedPath.from_key(key)) is None:
             return None
 
-        # Route to appropriate handler
-        if parsed.level == PathLevel.ROOT:
-            data = self._build_root_metadata()
-        elif parsed.level == PathLevel.OME_GROUP:
-            data = self._build_ome_metadata()
-        elif parsed.level == PathLevel.OME_METADATA:
-            # Return raw OME-XML string
-            data = self._biofile.ome_xml.encode()
-        elif parsed.level == PathLevel.MULTISCALES_GROUP:
-            # In NGFF v0.5, series group IS the multiscales group
-            data = self._build_multiscales_metadata(parsed.series)  # type: ignore[arg-type]
-        elif parsed.level == PathLevel.ARRAY_METADATA:
-            # Delegate to array store
-            store = self._get_array_store(parsed.series, parsed.resolution)  # type: ignore[arg-type]
-            return await store.get("zarr.json", prototype, byte_range)
-        elif parsed.level == PathLevel.CHUNK:
-            # Delegate to array store
-            store = self._get_array_store(parsed.series, parsed.resolution)  # type: ignore[arg-type]
-            with self._biofile.ensure_open():
-                return await store.get(parsed.chunk_key, prototype, byte_range)  # type: ignore[arg-type]
-        else:
-            return None
+        match parsed:
+            case PathLevel.ROOT, _, _, _:
+                data = self._build_root_metadata()
+            case PathLevel.OME_GROUP, _, _, _:
+                data = self._build_ome_metadata()
+            case PathLevel.OME_METADATA, _, _, _:
+                data = self._biofile.ome_xml.encode()
+            case PathLevel.MULTISCALES_GROUP, series, _, _:
+                data = self._build_multiscales_metadata(series)  # type: ignore
+            case PathLevel.ARRAY_METADATA, series, resolution, _:
+                store = self._get_array_store(series, resolution)  # type: ignore
+                return await store.get("zarr.json", prototype, byte_range)
+            case PathLevel.CHUNK, series, resolution, chunk_key:
+                store = self._get_array_store(series, resolution)  # type: ignore
+                with self._biofile.ensure_open():
+                    return await store.get(chunk_key, prototype, byte_range)  # type: ignore
+            case _:
+                return None
 
         # Apply byte range if requested
         if byte_range is not None:
