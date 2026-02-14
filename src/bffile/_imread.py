@@ -131,13 +131,6 @@ def open_ome_zarr_group(
 
     Examples
     --------
-    Open a single series as an array:
-
-    >>> zarr_array = open_ome_zarr_group("image.nd2", series=0)
-    >>> data = zarr_array[0, 0, 0]
-
-    Open all series as a group:
-
     >>> zarr_group = open_ome_zarr_group("image.nd2")
     >>> # Access first series, full resolution
     >>> arr = zarr_group["0/0"]
