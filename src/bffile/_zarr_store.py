@@ -319,7 +319,8 @@ class BioFormatsStore(Store):
         )
 
         # Extract single RGB channel if interleaving RGB as channels
-        if rgb_sample is not None:
+        # Only slice if the image actually has RGB channels (rgb > 1)
+        if rgb_sample is not None and self._meta.shape.rgb > 1:
             plane = plane[..., rgb_sample]  # (Y, X, RGB) → (Y, X)
 
         # Pad edge chunks to full tile size (zarr expects full chunk shape)
