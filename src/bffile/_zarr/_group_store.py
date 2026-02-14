@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
     from bffile._biofile import BioFile
     from bffile._core_metadata import CoreMetadata
+    from bffile._zarr._array_store import BFArrayStore
 
 
 # NGFF v0.5 specification unit whitelists
@@ -103,52 +104,6 @@ class ParsedPath:
     series: int | None = None
     resolution: int | None = None
     chunk_key: str | None = None
-
-
-def _get_effective_shape(meta: CoreMetadata) -> tuple[int, ...]:
-    """Get effective shape with RGB expanded into C dimension.
-
-    Returns
-    -------
-    tuple[int, ...]
-        Shape as (T, C_effective, Z, Y, X) where C_effective = C * RGB
-    """
-    return (
-        meta.shape.t,
-        meta.shape.c * meta.shape.rgb,  # Expand RGB into C
-        meta.shape.z,
-        meta.shape.y,
-        meta.shape.x,
-    )
-
-
-def _get_dimension_filter(meta: CoreMetadata) -> list[bool]:
-    """Determine which dimensions to include (True) or omit (False).
-
-    **SINGLE SOURCE OF TRUTH** for dimension filtering across axes, scales,
-    and array shapes.
-
-    Omits dimensions with size 1, but always keeps Y and X (required by NGFF).
-    This matches bioformats2raw's --compact behavior.
-
-    Parameters
-    ----------
-    meta : CoreMetadata
-        Core metadata with shape information
-
-    Returns
-    -------
-    list[bool]
-        Boolean mask [T, C, Z, Y, X] indicating which dimensions to include
-    """
-    t, c_eff, z, _y, _x = _get_effective_shape(meta)
-    return [
-        t > 1,  # T: only if size > 1
-        c_eff > 1,  # C: only if size > 1 (RGB already expanded)
-        z > 1,  # Z: only if size > 1
-        True,  # Y: always include (NGFF requires 2 spatial dims)
-        True,  # X: always include (NGFF requires 2 spatial dims)
-    ]
 
 
 def _extract_ngff_unit(
@@ -299,7 +254,7 @@ class BFOmeZarrStore(Store):
         super().__init__(read_only=True)
         self._biofile = biofile
         self._tile_size = tile_size
-        self._array_stores: dict[tuple[int, int], Store] = {}
+        self._array_stores: dict[tuple[int, int], BFArrayStore] = {}
         self._is_open = True
 
     # ------------------------------------------------------------------
@@ -386,8 +341,8 @@ class BFOmeZarrStore(Store):
         """Build axes list from metadata.
 
         Omits singleton dimensions (size 1) except Y and X which are always
-        included per NGFF requirements. Uses _get_dimension_filter() as the
-        single source of truth.
+        included per NGFF requirements. Delegates to array store's dimension
+        filter for consistency with chunk generation.
 
         Units are extracted from OME-XML Quantity objects and validated against
         NGFF v0.5 whitelists.
@@ -399,7 +354,9 @@ class BFOmeZarrStore(Store):
         """
         axes: list[dict[str, str]] = []
         pixels = ome.images[series].pixels
-        dim_filter = _get_dimension_filter(meta)
+        # Use array store's dimension filter (single source of truth)
+        store_0 = self._get_array_store(series, 0)
+        dim_filter = store_0._dim_filter
         dim_names = ["t", "c", "z", "y", "x"]
         dim_types = ["time", "channel", "space", "space", "space"]
 
@@ -466,7 +423,9 @@ class BFOmeZarrStore(Store):
             # Build coordinate transforms (scale values)
             # Physical size * downsampling factor = effective pixel size
             # Only include scales for dimensions that are present (use same filter)
-            dim_filter = _get_dimension_filter(meta_0)
+            # Use array store's dimension filter (single source of truth)
+            store_0 = self._get_array_store(series, 0)
+            dim_filter = store_0._dim_filter
             all_scales = [
                 1.0,  # T
                 1.0,  # C
@@ -483,7 +442,7 @@ class BFOmeZarrStore(Store):
 
         return datasets
 
-    def _get_array_store(self, series: int, resolution: int) -> Store:
+    def _get_array_store(self, series: int, resolution: int) -> BFArrayStore:
         """Get or create cached array store for a series/resolution.
 
         Uses integrated BioFormatsStore with RGB expansion and dimension
