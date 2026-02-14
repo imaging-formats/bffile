@@ -9,7 +9,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from bffile._biofile import BioFile
-    from bffile._zarr_store import BioFormatsStore
+    from bffile._zarr import BFArrayStore
 
 
 class LazyBioArray:
@@ -126,7 +126,7 @@ class LazyBioArray:
         tile_size: tuple[int, int] | None = None,
         rgb_as_channels: bool = False,
         squeeze_singletons: bool = False,
-    ) -> BioFormatsStore:
+    ) -> BFArrayStore:
         """Create a read-only zarr v3 store backed by this array.
 
         Each zarr chunk maps to a single ``read_plane()`` call. Requires
@@ -150,9 +150,9 @@ class LazyBioArray:
         BioFormatsStore
             A zarr v3 Store suitable for ``zarr.open(store, mode="r")``.
         """
-        from bffile._zarr_store import BioFormatsStore
+        from bffile._zarr import BFArrayStore
 
-        return BioFormatsStore(
+        return BFArrayStore(
             self,
             tile_size=tile_size,
             rgb_as_channels=rgb_as_channels,

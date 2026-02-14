@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from bffile._lazy_array import LazyBioArray
 
 
-class BioFormatsStore(Store):
+class BFArrayStore(Store):
     """Read-only zarr v3 store that virtualizes a Bio-Formats file.
 
     Each zarr chunk maps to a single ``read_plane()`` call, producing raw
@@ -348,7 +348,7 @@ class BioFormatsStore(Store):
     # ------------------------------------------------------------------
 
     def __eq__(self, value: object) -> bool:
-        if not isinstance(value, BioFormatsStore):
+        if not isinstance(value, BFArrayStore):
             return NotImplemented
         return (
             self._biofile.filename == value._biofile.filename
@@ -438,7 +438,7 @@ class BioFormatsStore(Store):
     async def _close(self) -> None:
         self.close()
 
-    def __enter__(self) -> BioFormatsStore:
+    def __enter__(self) -> BFArrayStore:
         return self
 
     def __exit__(self, *args: Any) -> None:

@@ -12,7 +12,7 @@ from zarr.abc.store import OffsetByteRequest, RangeByteRequest, Store, SuffixByt
 from zarr.core.buffer import default_buffer_prototype
 from zarr.core.sync import sync
 
-from ._utils import physical_pixel_sizes
+from bffile._utils import physical_pixel_sizes
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable
@@ -252,7 +252,7 @@ class PathRouter:
         return ParsedPath(level=PathLevel.UNKNOWN)
 
 
-class BioFormatsGroupStore(Store):
+class BFOmeZarrStore(Store):
     """Read-only zarr v3 group store for complete Bio-Formats file hierarchy.
 
     Virtualizes an entire Bio-Formats file as an OME-ZARR group containing
@@ -279,13 +279,6 @@ class BioFormatsGroupStore(Store):
     tile_size : tuple[int, int], optional
         If provided, Y and X are chunked into tiles of this size.
 
-    Notes
-    -----
-    RGB images are represented as 6D arrays (TCZYXS) rather than expanding RGB
-    components into the C dimension. This differs from bioformats2raw which uses
-    ChannelSeparator to create 5D arrays with expanded channels. While this
-    approach works for most zarr tools, it may not be fully NGFF v0.5 compliant
-    for all use cases.
 
     Examples
     --------
@@ -513,7 +506,7 @@ class BioFormatsGroupStore(Store):
     # ------------------------------------------------------------------
 
     def __eq__(self, value: object) -> bool:
-        if not isinstance(value, BioFormatsGroupStore):
+        if not isinstance(value, type(self)):
             return NotImplemented
         return (
             self._biofile.filename == value._biofile.filename
@@ -606,10 +599,10 @@ class BioFormatsGroupStore(Store):
         return False
 
     async def set(self, key: str, value: Buffer) -> None:
-        raise PermissionError("BioFormatsGroupStore is read-only")
+        raise PermissionError(f"{type(self).__name__} is read-only")
 
     async def delete(self, key: str) -> None:
-        raise PermissionError("BioFormatsGroupStore is read-only")
+        raise PermissionError(f"{type(self).__name__} is read-only")
 
     @property
     def supports_writes(self) -> bool:
@@ -683,7 +676,7 @@ class BioFormatsGroupStore(Store):
     async def _close(self) -> None:
         self.close()
 
-    def __enter__(self) -> BioFormatsGroupStore:
+    def __enter__(self) -> BFOmeZarrStore:
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -691,7 +684,7 @@ class BioFormatsGroupStore(Store):
 
     def __repr__(self) -> str:
         return (
-            f"BioFormatsGroupStore({self._biofile.filename!r}, "
+            f"{type(self).__name__}({self._biofile.filename!r}, "
             f"series_count={len(self._biofile)})"
         )
 
@@ -704,7 +697,7 @@ class BioFormatsGroupStore(Store):
         prototype: BufferPrototype,
         key_value_ranges: Iterable[tuple[str, Buffer, ByteRequest | None]],
     ) -> AsyncIterator[None]:
-        raise PermissionError("BioFormatsGroupStore is read-only")
+        raise PermissionError(f"{type(self).__name__} is read-only")
 
     @property
     def supports_partial_writes(self) -> Literal[False]:  # pragma: no cover

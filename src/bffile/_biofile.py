@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from bffile._lazy_array import LazyBioArray
-    from bffile._zarr_group_store import BioFormatsGroupStore
+    from bffile._zarr import BFOmeZarrStore
 
 
 @dataclass(frozen=True)
@@ -465,7 +465,7 @@ class BioFile(Sequence[Series]):
         self,
         *,
         tile_size: tuple[int, int] | None = None,
-    ) -> BioFormatsGroupStore:
+    ) -> BFOmeZarrStore:
         """Return a zarr v3 group store containing all series and resolutions.
 
         Creates an OME-ZARR group structure following NGFF v0.5 specification,
@@ -495,7 +495,7 @@ class BioFile(Sequence[Series]):
 
         Returns
         -------
-        BioFormatsGroupStore
+        BFOmeZarrStore
             Read-only zarr v3 Store containing the full file hierarchy.
 
         Examples
@@ -523,9 +523,9 @@ class BioFile(Sequence[Series]):
           visualization tools
         - Conforms to NGFF v0.5 specification
         """
-        from bffile._zarr_group_store import BioFormatsGroupStore
+        from bffile._zarr._group_store import BFOmeZarrStore
 
-        return BioFormatsGroupStore(self, tile_size=tile_size)
+        return BFOmeZarrStore(self, tile_size=tile_size)
 
     def to_dask(
         self,
