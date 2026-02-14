@@ -502,7 +502,7 @@ class BioFormatsGroupStore(Store):
             # Single store with integrated transformations
             store = arr.zarr_store(
                 tile_size=self._tile_size,
-                expand_rgb=True,  # Always expand RGB into C
+                rgb_as_channels=True,  # Interleave RGB into C (OME-Zarr convention)
                 squeeze_singletons=True,  # Omit size-1 dims per NGFF
             )
             self._array_stores[key] = store

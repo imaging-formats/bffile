@@ -6,8 +6,8 @@ build-stubs:
     uv run scripts/stubgen.py 'ome:formats-gpl:RELEASE' --prefix loci --prefix ome --prefix java
 
 # run tests quickly with coverage
-test:
-    uv run pytest --allow-cache -n 6 --cov --cov-report=xml --cov-report=term-missing
+test *ARGS:
+    uv run pytest -n 6 --cov --cov-report=xml --cov-report=term-missing {{ARGS}}
     uv run diff-cover coverage.xml --compare-branch=upstream/main
 
 # run linting and type checking

@@ -38,15 +38,20 @@ class BioFormatsStore(Store):
     tile_size : tuple[int, int], optional
         If provided, Y and X are chunked into tiles of this size instead of
         full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``.
-    memoize : int or bool, optional
-        Memoizer threshold in ms (only used in standalone mode), by default 0.
+    rgb_as_channels : bool, optional
+        If True, interleave RGB samples as separate C channels (OME-Zarr convention).
+        If False, keep RGB as the last dimension (numpy/imread convention).
+        Default is False.
+    squeeze_singletons : bool, optional
+        If True, omit dimensions with size 1 from array shape (except Y/X).
+        Default is False.
 
     Examples
     --------
     From a LazyBioArray (borrowed BioFile):
 
     >>> with BioFile("image.nd2") as bf:
-    ...     store = bf.as_array().as_zarr()
+    ...     store = bf.as_array().zarr_store()
     ...     arr = zarr.open(store, mode="r")
     ...     data = arr[0, 0, 0]
     """
@@ -58,7 +63,7 @@ class BioFormatsStore(Store):
         *,
         tile_size: tuple[int, int] | None = None,
         memoize: int | bool = 0,
-        expand_rgb: bool = False,
+        rgb_as_channels: bool = False,
         squeeze_singletons: bool = False,
     ) -> None:
         super().__init__(read_only=True)
@@ -70,7 +75,7 @@ class BioFormatsStore(Store):
         self._lazy_array = obj
         self._meta = obj._meta
         self._tile_size = tile_size
-        self._expand_rgb = expand_rgb and self._meta.shape.rgb > 1
+        self._rgb_as_channels = rgb_as_channels
         self._squeeze_singletons = squeeze_singletons
         self._metadata_bytes: bytes | None = None
         self._chunk_keys: set[str] | None = None
@@ -85,16 +90,21 @@ class BioFormatsStore(Store):
         return self._lazy_array._biofile
 
     def _compute_effective_shape(self) -> tuple[int, ...]:
-        """Compute effective shape with RGB expansion and dimension squeezing."""
+        """Compute effective shape with RGB handling and dimension squeezing."""
         shape = self._meta.shape
-        t, c, z, y, x = shape.t, shape.c, shape.z, shape.y, shape.x
+        t, c, z, y, x, rgb = shape.t, shape.c, shape.z, shape.y, shape.x, shape.rgb
 
-        # RGB expansion: multiply C by RGB samples
-        c_eff = c * shape.rgb if self._expand_rgb else c
+        if self._rgb_as_channels:
+            # Interleave RGB samples as separate C channels
+            full_shape = [t, c * rgb, z, y, x]
+        else:
+            # Keep RGB as last dimension (matching imread behavior)
+            if rgb > 1:
+                full_shape = [t, c, z, y, x, rgb]
+            else:
+                full_shape = [t, c, z, y, x]
 
-        full_shape = [t, c_eff, z, y, x]
-
-        # Dimension squeezing: omit singletons (except Y/X always kept)
+        # Dimension squeezing: omit singletons (except Y/X and RGB always kept)
         if self._squeeze_singletons:
             dim_filter = self._compute_dimension_filter()
             return tuple(
@@ -104,20 +114,43 @@ class BioFormatsStore(Store):
         return tuple(full_shape)
 
     def _compute_dimension_filter(self) -> list[bool]:
-        """Return [T, C, Z, Y, X] mask indicating which dims to include."""
-        if not self._squeeze_singletons:
-            return [True, True, True, True, True]
+        """Return mask indicating which dims to include.
 
+        Returns [T, C, Z, Y, X] for 5D arrays or [T, C, Z, Y, X, RGB] for 6D arrays.
+        """
         shape = self._meta.shape
-        c_eff = shape.c * shape.rgb if self._expand_rgb else shape.c
 
-        return [
-            shape.t > 1,  # T
-            c_eff > 1,  # C (with RGB expanded)
-            shape.z > 1,  # Z
-            True,  # Y (always keep)
-            True,  # X (always keep)
-        ]
+        if self._rgb_as_channels:
+            # RGB interleaved into C: always 5D
+            if not self._squeeze_singletons:
+                return [True, True, True, True, True]
+            c_eff = shape.c * shape.rgb
+            return [
+                shape.t > 1,  # T
+                c_eff > 1,  # C (with RGB interleaved)
+                shape.z > 1,  # Z
+                True,  # Y (always keep)
+                True,  # X (always keep)
+            ]
+        else:
+            # RGB as separate dimension: 5D or 6D
+            has_rgb_dim = shape.rgb > 1
+            if not self._squeeze_singletons:
+                base_filter = [True, True, True, True, True]
+                if has_rgb_dim:
+                    base_filter.append(True)  # RGB (always keep if present)
+                return base_filter
+
+            base_filter = [
+                shape.t > 1,  # T
+                shape.c > 1,  # C
+                shape.z > 1,  # Z
+                True,  # Y (always keep)
+                True,  # X (always keep)
+            ]
+            if has_rgb_dim:
+                base_filter.append(True)  # RGB (always keep if present)
+            return base_filter
 
     # ------------------------------------------------------------------
     # Metadata & chunk key helpers
@@ -131,7 +164,7 @@ class BioFormatsStore(Store):
         meta = self._meta
         shape = meta.shape
 
-        # Use effective shape (RGB expanded, singletons squeezed)
+        # Use effective shape (RGB handled, singletons squeezed)
         array_shape = list(self._effective_shape)
 
         # Build chunk shape to match effective shape
@@ -140,6 +173,10 @@ class BioFormatsStore(Store):
             base_chunks = [1, 1, 1, ty, tx]
         else:
             base_chunks = [1, 1, 1, shape.y, shape.x]
+
+        # Add RGB dimension to chunk if present in array (never chunked separately)
+        if not self._rgb_as_channels and shape.rgb > 1:
+            base_chunks.append(shape.rgb)
 
         # Apply dimension filter to get final chunk shape
         chunks = [
@@ -171,7 +208,11 @@ class BioFormatsStore(Store):
         return self._metadata_bytes
 
     def _get_chunk_keys(self) -> set[str]:
-        """Build and cache chunk keys for effective shape."""
+        """Build and cache chunk keys for effective shape.
+
+        Keys match array dimensionality (5D or 6D). For 6D arrays, RGB
+        coordinate is always 0 since RGB is never chunked separately.
+        """
         if self._chunk_keys is not None:
             return self._chunk_keys
 
@@ -185,19 +226,27 @@ class BioFormatsStore(Store):
             ny = 1
             nx = 1
 
-        # Generate keys for effective shape (RGB expanded, singletons squeezed)
+        # Generate keys for effective shape (RGB handled, singletons squeezed)
         keys: set[str] = set()
 
-        # Build ranges for each dimension in full 5D space
+        # Build ranges for each dimension
         t_range = range(shape.t)
-        c_eff = shape.c * shape.rgb if self._expand_rgb else shape.c
-        c_range = range(c_eff)
+        if self._rgb_as_channels:
+            c_range = range(shape.c * shape.rgb)
+        else:
+            c_range = range(shape.c)
         z_range = range(shape.z)
         yi_range = range(ny)
         xi_range = range(nx)
 
-        # Apply dimension filter to generate squeezed keys
+        # Build ranges list (5D or 6D depending on RGB mode)
         ranges = [t_range, c_range, z_range, yi_range, xi_range]
+
+        # Add RGB range if present (always range(1) - never chunk along RGB)
+        if not self._rgb_as_channels and shape.rgb > 1:
+            ranges.append(range(1))  # Single chunk for RGB dimension
+
+        # Apply dimension filter to generate squeezed keys
         active_ranges = [
             r for r, keep in zip(ranges, self._dim_filter, strict=False) if keep
         ]
@@ -211,26 +260,35 @@ class BioFormatsStore(Store):
         return keys
 
     def _parse_chunk_key(self, key: str) -> tuple[int, int, int, int, int]:
-        """Parse squeezed chunk key to full (t, c, z, yi, xi) coordinates."""
+        """Parse squeezed chunk key to (t, c, z, yi, xi) coordinates.
+
+        Note: Returns 5D TCZYX coordinates. If key includes RGB coordinate
+        (for 6D arrays), it's ignored since RGB is always 0.
+        """
         parts = key.split("/")
         squeezed_indices = [int(p) for p in parts[1:]]  # Skip "c" prefix
 
-        # Map squeezed indices back to full 5D
-        full_indices = [0, 0, 0, 0, 0]  # [t, c, z, yi, xi]
+        # Map squeezed indices back to full dimensions (5D or 6D)
+        # We always return 5D (TCZYX), ignoring RGB coordinate if present
+        has_rgb_dim = not self._rgb_as_channels and self._meta.shape.rgb > 1
+        ndims = 6 if has_rgb_dim else 5
+
+        full_indices = [0] * ndims  # [t, c, z, yi, xi] or [t, c, z, yi, xi, rgb]
         kept_dims = [i for i, keep in enumerate(self._dim_filter) if keep]
 
         for squeezed_i, dim_i in enumerate(kept_dims):
             full_indices[dim_i] = squeezed_indices[squeezed_i]
 
-        return tuple(full_indices)
+        # Return only TCZYX (first 5), dropping RGB coordinate if present
+        return tuple(full_indices[:5])  # type: ignore[return-value]
 
     def _read_chunk(self, key: str) -> bytes:
         """Read a chunk by its key and return raw bytes."""
         # Parse key (handles both squeezed and full formats)
         t, c_eff, z, yi, xi = self._parse_chunk_key(key)
 
-        # Map effective C back to base (c, rgb_sample) if RGB is expanded
-        if self._expand_rgb:
+        # Map effective C back to base (c, rgb_sample) if RGB interleaved as channels
+        if self._rgb_as_channels:
             c_base = c_eff // self._meta.shape.rgb
             rgb_sample = c_eff % self._meta.shape.rgb
         else:
@@ -260,7 +318,7 @@ class BioFormatsStore(Store):
             resolution=arr._resolution,
         )
 
-        # Extract single RGB channel if expanding RGB
+        # Extract single RGB channel if interleaving RGB as channels
         if rgb_sample is not None:
             plane = plane[..., rgb_sample]  # (Y, X, RGB) → (Y, X)
 
@@ -270,9 +328,15 @@ class BioFormatsStore(Store):
             actual_h = y_stop - y_start
             actual_w = x_stop - x_start
             if actual_h < ty or actual_w < tx:
-                # After RGB extraction, plane is always 2D (Y, X)
-                padded = np.zeros((ty, tx), dtype=self._meta.dtype)
-                padded[:actual_h, :actual_w] = plane
+                # Determine expected shape based on RGB mode
+                if rgb_sample is not None or shape.rgb == 1:
+                    # RGB extracted or no RGB: plane is 2D (Y, X)
+                    padded = np.zeros((ty, tx), dtype=self._meta.dtype)
+                    padded[:actual_h, :actual_w] = plane
+                else:
+                    # RGB kept: plane is 3D (Y, X, RGB)
+                    padded = np.zeros((ty, tx, shape.rgb), dtype=self._meta.dtype)
+                    padded[:actual_h, :actual_w, :] = plane
                 plane = padded
 
         # Ensure contiguous C-order for correct byte layout

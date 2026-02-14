@@ -42,7 +42,7 @@ def multiseries_file() -> Path:
 @pytest.fixture
 def pyramid_file() -> Path:
     """SVS file with multiple resolution levels."""
-    return TEST_DATA / "CMU-1-Small-Region.svs"
+    return TEST_DATA / "CMU-1.svs"
 
 
 @pytest.fixture
@@ -94,7 +94,7 @@ def pytest_sessionstart() -> None:
 # register pytest options
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
-        "--allow-cache",
+        "--no-jgo-cache",
         action="store_true",
         default=False,
         help="Allow cache to be used for tests",
@@ -128,9 +128,7 @@ def cache_dirs(request: pytest.FixtureRequest) -> Iterator[Path | None]:
 
     # caching significantly speeds up tests, but we want to ensure that
     # we test on a clean cache, and don't pollute the user's cache.
-    # If the user has set ALLOW_CACHE, we will use the actual cache directories.
-    # Otherwise, we will use a temporary directory.
-    if request.config.getoption("--allow-cache") or os.getenv("ALLOW_CACHE", ""):
+    if not request.config.getoption("--no-jgo-cache"):
         print("Reading/writing to actual user cache directories")
         yield None
         return

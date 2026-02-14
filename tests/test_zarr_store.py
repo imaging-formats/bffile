@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 from bffile import BioFile
-from bffile._imread import imread, open_zarr
+from bffile._imread import imread, open_zarr_array
 
 if TYPE_CHECKING:
     import zarr
@@ -41,10 +41,11 @@ def test_data_matches_read_plane(any_file: Path) -> None:
         fmt = any_file.suffix
         pytest.xfail(f"Known issue with {fmt} files in zarr store")
 
-    zarr_arr = open_zarr(any_file, series=0)
+    zarr_arr = open_zarr_array(any_file, series=0)
     assert isinstance(zarr_arr, zarr.Array)
     if zarr_arr.nbytes > 100 * 1024 * 1024:
         pytest.skip("File too large for in-memory comparison")
+
     all_data = imread(any_file)
     assert isinstance(all_data, np.ndarray)
     np.testing.assert_array_equal(zarr_arr, all_data)
