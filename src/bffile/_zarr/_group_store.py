@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import zarr
+from ome_types.model import UnitsLength, UnitsTime
 from zarr.core.buffer import default_buffer_prototype
 from zarr.core.sync import sync
 
@@ -14,181 +15,75 @@ from bffile._utils import physical_pixel_sizes
 from bffile._zarr._base_store import ReadOnlyStore
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Iterator
 
     from ome_types import OME
-    from pint import Quantity
     from zarr.abc.store import ByteRequest, Store
     from zarr.core.buffer import Buffer, BufferPrototype
     from zarr.storage import StoreLike
 
     from bffile._biofile import BioFile
-    from bffile._core_metadata import CoreMetadata
     from bffile._zarr._array_store import BFArrayStore
 
+# OME-NGFF dimension type mapping
+_DIMENSION_TYPES = {
+    "t": "time",
+    "c": "channel",
+    "z": "space",
+    "y": "space",
+    "x": "space",
+    "r": "channel",  # RGB (unused: group store uses rgb_as_channels=True)
+}
 
-# NGFF v0.5 specification unit whitelists
-# https://ngff.openmicroscopy.org/v0.5/#axes-md
-NGFF_LENGTH_UNITS = frozenset(
-    [
-        "angstrom",
-        "attometer",
-        "centimeter",
-        "decimeter",
-        "exameter",
-        "femtometer",
-        "foot",
-        "gigameter",
-        "hectometer",
-        "inch",
-        "kilometer",
-        "megameter",
-        "meter",
-        "micrometer",
-        "millimeter",
-        "nanometer",
-        "petameter",
-        "picometer",
-        "terameter",
-        "yottameter",
-        "zeptometer",
-        "zettameter",
-    ]
-)
-NGFF_TIME_UNITS = frozenset(
-    [
-        "attosecond",
-        "centisecond",
-        "day",
-        "decisecond",
-        "exasecond",
-        "femtosecond",
-        "gigasecond",
-        "hectosecond",
-        "hour",
-        "kilosecond",
-        "megasecond",
-        "microsecond",
-        "millisecond",
-        "minute",
-        "nanosecond",
-        "picosecond",
-        "second",
-        "terasecond",
-        "yottasecond",
-        "zeptosecond",
-        "zettasecond",
-    ]
-)
+# OME to NGFF unit mappings (only NGFF-whitelisted units)
+_OME_TO_NGFF_TIME: dict[UnitsTime, str] = {
+    UnitsTime.YOTTASECOND: "yottasecond",
+    UnitsTime.ZETTASECOND: "zettasecond",
+    UnitsTime.EXASECOND: "exasecond",
+    UnitsTime.TERASECOND: "terasecond",
+    UnitsTime.GIGASECOND: "gigasecond",
+    UnitsTime.MEGASECOND: "megasecond",
+    UnitsTime.KILOSECOND: "kilosecond",
+    UnitsTime.HECTOSECOND: "hectosecond",
+    UnitsTime.SECOND: "second",
+    UnitsTime.DECISECOND: "decisecond",
+    UnitsTime.CENTISECOND: "centisecond",
+    UnitsTime.MILLISECOND: "millisecond",
+    UnitsTime.MICROSECOND: "microsecond",
+    UnitsTime.NANOSECOND: "nanosecond",
+    UnitsTime.PICOSECOND: "picosecond",
+    UnitsTime.FEMTOSECOND: "femtosecond",
+    UnitsTime.ATTOSECOND: "attosecond",
+    UnitsTime.ZEPTOSECOND: "zeptosecond",
+    UnitsTime.MINUTE: "minute",
+    UnitsTime.HOUR: "hour",
+    UnitsTime.DAY: "day",
+}
 
-
-class PathLevel(Enum):
-    """Classification of path levels in the zarr hierarchy."""
-
-    ROOT = auto()
-    OME_GROUP = auto()
-    OME_METADATA = auto()
-    SERIES_GROUP = auto()
-    MULTISCALES_GROUP = auto()
-    ARRAY_METADATA = auto()
-    CHUNK = auto()
-    UNKNOWN = auto()
-
-
-class ParsedPath(NamedTuple):
-    """Structured information parsed from a zarr path."""
-
-    level: PathLevel
-    series: int | None = None
-    resolution: int | None = None
-    chunk_key: str | None = None
-
-    @classmethod
-    def from_key(cls, key: str) -> ParsedPath | None:
-        """Parse a zarr key and return structured path information.
-
-        Path patterns (NGFF v0.5):
-        - zarr.json → root group metadata
-        - OME/zarr.json → OME group metadata
-        - OME/METADATA.ome.xml → OME-XML string
-        - {series}/zarr.json → series/multiscales group metadata
-        - {series}/{resolution}/zarr.json → array metadata
-        - {series}/{resolution}/c/... → chunk data
-
-        Parameters
-        ----------
-        key : str
-            The zarr key to parse.
-
-        Returns
-        -------
-        ParsedPath
-            Structured information about the path.
-        """
-        if key == "zarr.json":
-            return cls(PathLevel.ROOT)
-
-        if key == "OME/zarr.json":
-            return cls(PathLevel.OME_GROUP)
-
-        if key == "OME/METADATA.ome.xml":
-            return cls(PathLevel.OME_METADATA)
-
-        parts = key.split("/")
-
-        # Series/multiscales group: {series}/zarr.json
-        if len(parts) == 2 and parts[1] == "zarr.json":
-            return cls(PathLevel.MULTISCALES_GROUP, series=int(parts[0]))
-
-        # Array metadata: {series}/{resolution}/zarr.json
-        if len(parts) == 3 and parts[2] == "zarr.json":
-            series = int(parts[0])
-            resolution = int(parts[1])
-            return cls(
-                level=PathLevel.ARRAY_METADATA,
-                series=series,
-                resolution=resolution,
-            )
-
-        # Chunk data: {series}/{resolution}/c/...
-        if len(parts) >= 4 and parts[2] == "c":
-            series = int(parts[0])
-            resolution = int(parts[1])
-            # Reconstruct chunk key: "c/t/c/z/yi/xi" or "c/t/c/z/yi/xi/0"
-            chunk_key = "/".join(parts[2:])
-            return cls(
-                level=PathLevel.CHUNK,
-                series=series,
-                resolution=resolution,
-                chunk_key=chunk_key,
-            )
-
-        return None
-
-
-def _extract_ngff_unit(
-    quantity: Quantity | None, dimension_type: Literal["space", "time"]
-) -> str | None:
-    """Extract NGFF-compliant unit string from a pint Quantity.
-
-    If the OME metadata contains a unit not in the whitelist, we omit the unit
-    key from the axes metadata rather than writing an invalid value.
-    """
-    if quantity is None:
-        return None
-
-    # Extract unit string from pint Quantity
-    unit_str = str(quantity.units)
-
-    # Validate against NGFF whitelist
-    if dimension_type == "space":
-        if unit_str in NGFF_LENGTH_UNITS:
-            return unit_str
-    elif dimension_type == "time":
-        if unit_str in NGFF_TIME_UNITS:
-            return unit_str
-
-    return None
+_OME_TO_NGFF_LENGTH: dict[UnitsLength, str] = {
+    UnitsLength.YOTTAMETER: "yottameter",
+    UnitsLength.ZETTAMETER: "zettameter",
+    UnitsLength.EXAMETER: "exameter",
+    UnitsLength.PETAMETER: "petameter",
+    UnitsLength.TERAMETER: "terameter",
+    UnitsLength.GIGAMETER: "gigameter",
+    UnitsLength.MEGAMETER: "megameter",
+    UnitsLength.KILOMETER: "kilometer",
+    UnitsLength.HECTOMETER: "hectometer",
+    UnitsLength.METER: "meter",
+    UnitsLength.DECIMETER: "decimeter",
+    UnitsLength.CENTIMETER: "centimeter",
+    UnitsLength.MILLIMETER: "millimeter",
+    UnitsLength.MICROMETER: "micrometer",
+    UnitsLength.NANOMETER: "nanometer",
+    UnitsLength.PICOMETER: "picometer",
+    UnitsLength.FEMTOMETER: "femtometer",
+    UnitsLength.ATTOMETER: "attometer",
+    UnitsLength.ZEPTOMETER: "zeptometer",
+    UnitsLength.ANGSTROM: "angstrom",
+    UnitsLength.INCH: "inch",
+    UnitsLength.FOOT: "foot",
+}
 
 
 class BFOmeZarrStore(ReadOnlyStore):
@@ -217,7 +112,6 @@ class BFOmeZarrStore(ReadOnlyStore):
         An open BioFile instance. Must remain open for the lifetime of the store.
     tile_size : tuple[int, int], optional
         If provided, Y and X are chunked into tiles of this size.
-
 
     Examples
     --------
@@ -291,14 +185,9 @@ class BFOmeZarrStore(ReadOnlyStore):
         behavior. For now, RGB images are accessible but may not be fully compliant
         with all NGFF tools.
         """
-        meta = self._biofile[series].core_metadata()
+        meta = self._biofile.core_metadata(series=series)
         ome = self._biofile.ome_metadata
-
-        # Build axes list (order: T, C, Z, Y, X)
-        axes = self._build_axes(meta, ome, series)
-
-        # Build datasets list (one per resolution)
-        datasets = self._build_datasets(meta, ome, series)
+        datasets = self._build_datasets(ome, series, meta.resolution_count)
 
         metadata: dict[str, Any] = {
             "zarr_format": 3,
@@ -310,7 +199,7 @@ class BFOmeZarrStore(ReadOnlyStore):
                         {
                             "version": "0.5",
                             "name": f"Series {series}",
-                            "axes": axes,
+                            "axes": list(self._build_axes(ome, series)),
                             "datasets": datasets,
                         }
                     ],
@@ -319,54 +208,40 @@ class BFOmeZarrStore(ReadOnlyStore):
         }
         return json.dumps(metadata).encode()
 
-    def _build_axes(
-        self, meta: CoreMetadata, ome: OME, series: int
-    ) -> list[dict[str, str]]:
+    def _build_axes(self, ome: OME, series: int) -> Iterator[dict[str, str]]:
         """Build axes list from metadata.
 
         Omits singleton dimensions (size 1) except Y and X which are always
         included per NGFF requirements. Delegates to array store's dimension
         filter for consistency with chunk generation.
 
-        Units are extracted from OME-XML Quantity objects and validated against
-        NGFF v0.5 whitelists.
+        Units are mapped from OME-XML unit enums to NGFF v0.5 unit strings.
 
         Note
         ----
         For RGB images, the C dimension is expanded to include RGB samples
         (e.g., C=2 with RGB=3 becomes C=6).
         """
-        axes: list[dict[str, str]] = []
         pixels = ome.images[series].pixels
-        # Use array store's dimension filter (single source of truth)
         store_0 = self._get_array_store(series, 0)
-        dim_filter = store_0._dim_filter
-        dim_names = ["t", "c", "z", "y", "x"]
-        dim_types = ["time", "channel", "space", "space", "space"]
-
-        for include, name, dim_type in zip(
-            dim_filter, dim_names, dim_types, strict=False
-        ):
-            if not include:
-                continue
-
+        for name in store_0.dimension_names():
+            dim_type = _DIMENSION_TYPES.get(name, "other")
             axis: dict[str, str] = {"name": name, "type": dim_type}
-
-            # Add units for time and spatial dimensions
-            if dim_type == "time":
-                if unit := _extract_ngff_unit(pixels.time_increment_quantity, "time"):
-                    axis["unit"] = unit
+            if (
+                dim_type == "time"
+                and "time_increment_unit" in pixels.model_fields_set
+                and (unit := _OME_TO_NGFF_TIME.get(pixels.time_increment_unit))
+            ):
+                axis["unit"] = unit
             elif dim_type == "space":
-                quantity = getattr(pixels, f"physical_size_{name}_quantity")
-                if unit := _extract_ngff_unit(quantity, "space"):
-                    axis["unit"] = unit
-
-            axes.append(axis)
-
-        return axes
+                field_name = f"physical_size_{name}_unit"
+                if field_name in pixels.model_fields_set:
+                    if unit := _OME_TO_NGFF_LENGTH.get(getattr(pixels, field_name)):
+                        axis["unit"] = unit
+            yield axis
 
     def _build_datasets(
-        self, meta: CoreMetadata, ome: OME, series: int
+        self, ome: OME, series: int, resolution_count: int
     ) -> list[dict[str, Any]]:
         """Build datasets list with coordinate transforms for each resolution.
 
@@ -389,7 +264,7 @@ class BFOmeZarrStore(ReadOnlyStore):
         height_0 = meta_0.shape.y
         depth_0 = meta_0.shape.z
 
-        for res in range(meta.resolution_count):
+        for res in range(resolution_count):
             # Dataset path
             dataset: dict[str, Any] = {"path": str(res)}
 
@@ -595,3 +470,91 @@ class BFOmeZarrStore(ReadOnlyStore):
             buf = await self.get(key, prototype=proto)
             if buf is not None:
                 await dest.set(key, buf)
+
+
+# ==================================================================
+# helper classes and functions
+
+
+class PathLevel(Enum):
+    """Classification of path levels in the zarr hierarchy."""
+
+    ROOT = auto()
+    OME_GROUP = auto()
+    OME_METADATA = auto()
+    SERIES_GROUP = auto()
+    MULTISCALES_GROUP = auto()
+    ARRAY_METADATA = auto()
+    CHUNK = auto()
+    UNKNOWN = auto()
+
+
+class ParsedPath(NamedTuple):
+    """Structured information parsed from a zarr path."""
+
+    level: PathLevel
+    series: int | None = None
+    resolution: int | None = None
+    chunk_key: str | None = None
+
+    @classmethod
+    def from_key(cls, key: str) -> ParsedPath | None:
+        """Parse a zarr key and return structured path information.
+
+        Path patterns (NGFF v0.5):
+        - zarr.json → root group metadata
+        - OME/zarr.json → OME group metadata
+        - OME/METADATA.ome.xml → OME-XML string
+        - {series}/zarr.json → series/multiscales group metadata
+        - {series}/{resolution}/zarr.json → array metadata
+        - {series}/{resolution}/c/... → chunk data
+
+        Parameters
+        ----------
+        key : str
+            The zarr key to parse.
+
+        Returns
+        -------
+        ParsedPath
+            Structured information about the path.
+        """
+        if key == "zarr.json":
+            return cls(PathLevel.ROOT)
+
+        if key == "OME/zarr.json":
+            return cls(PathLevel.OME_GROUP)
+
+        if key == "OME/METADATA.ome.xml":
+            return cls(PathLevel.OME_METADATA)
+
+        parts = key.split("/")
+
+        # Series/multiscales group: {series}/zarr.json
+        if len(parts) == 2 and parts[1] == "zarr.json":
+            return cls(PathLevel.MULTISCALES_GROUP, series=int(parts[0]))
+
+        # Array metadata: {series}/{resolution}/zarr.json
+        if len(parts) == 3 and parts[2] == "zarr.json":
+            series = int(parts[0])
+            resolution = int(parts[1])
+            return cls(
+                level=PathLevel.ARRAY_METADATA,
+                series=series,
+                resolution=resolution,
+            )
+
+        # Chunk data: {series}/{resolution}/c/...
+        if len(parts) >= 4 and parts[2] == "c":
+            series = int(parts[0])
+            resolution = int(parts[1])
+            # Reconstruct chunk key: "c/t/c/z/yi/xi" or "c/t/c/z/yi/xi/0"
+            chunk_key = "/".join(parts[2:])
+            return cls(
+                level=PathLevel.CHUNK,
+                series=series,
+                resolution=resolution,
+                chunk_key=chunk_key,
+            )
+
+        return None

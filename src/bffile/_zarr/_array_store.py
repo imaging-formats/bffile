@@ -12,7 +12,7 @@ import numpy as np
 from bffile._zarr._base_store import ReadOnlyStore
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Iterator
 
     from zarr.abc.store import ByteRequest
     from zarr.core.buffer import Buffer, BufferPrototype
@@ -105,6 +105,16 @@ class BFArrayStore(ReadOnlyStore):
         elif shp[-1] <= 1:
             shp.pop()
         return tuple(compress(shp, self._dim_filter))
+
+    def dimension_names(self) -> Iterator[str]:
+        """Return active dimension names.
+
+        Returns
+        -------
+        Iterator[str]
+            Subset of "tczyxr" for non-squeezed dimensions.
+        """
+        yield from compress("tczyxr", self._dim_filter)
 
     # ------------------------------------------------------------------
     # Metadata & chunk key helpers

@@ -167,6 +167,7 @@ class BioFile(Sequence[Series]):
         self._java_reader: IFormatReader | None = None
         # 2D structure: list[series][resolution]
         self._core_meta_list: list[list[CoreMetadata]] | None = None
+        self._cached_ome_meta: OME | None = None
         self._finalizer: weakref.finalize | None = None
         self._suspended: bool = False
 
@@ -668,10 +669,13 @@ class BioFile(Sequence[Series]):
     @property
     def ome_metadata(self) -> OME:
         """Return [`ome_types.OME`][] object parsed from OME XML."""
-        if not (omx_xml := self.ome_xml):  # pragma: no cover (not sure if possible)
-            return OME()
-        xml = _utils.clean_ome_xml_for_known_issues(omx_xml)
-        return OME.from_xml(xml)
+        if self._cached_ome_meta is None:
+            if not (omx_xml := self.ome_xml):  # pragma: no cover (not sure if possible)
+                self._cached_ome_meta = OME()
+            else:
+                xml = _utils.clean_ome_xml_for_known_issues(omx_xml)
+                self._cached_ome_meta = OME.from_xml(xml)
+        return self._cached_ome_meta
 
     def __enter__(self) -> Self:
         """Enter context manager - ensures file is open."""
