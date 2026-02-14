@@ -77,10 +77,10 @@ class BFArrayStore(ReadOnlyStore):
         self._tile_size = tile_size
         self._rgb_as_channels = rgb_as_channels
         self._array_metadata_bytes: bytes | None = None  # built lazily
-        self._chunk_keys: set[str] | None = None
         self._is_open = True
 
         self._dim_filter = self._compute_dimension_filter(squeeze_singletons)
+        self._chunk_index_shape = self._compute_chunk_index_shape()
         self._effective_shape = self._compute_effective_shape()
 
     def _compute_dimension_filter(self, squeeze_singletons: bool) -> list[bool]:
@@ -162,17 +162,9 @@ class BFArrayStore(ReadOnlyStore):
         self._array_metadata_bytes = json.dumps(metadata).encode()
         return self._array_metadata_bytes
 
-    def _get_chunk_keys(self) -> set[str]:
-        """Build and cache chunk keys for effective shape.
-
-        Keys match array dimensionality (5D or 6D). For 6D arrays, RGB
-        coordinate is always 0 since RGB is never chunked separately.
-        """
-        if self._chunk_keys is not None:
-            return self._chunk_keys
-
+    def _compute_chunk_index_shape(self) -> tuple[int, ...]:
+        """Return per-axis chunk index sizes for generated chunk keys."""
         shape = self._meta.shape
-
         if self._tile_size is not None:
             ty, tx = self._tile_size
             ny = math.ceil(shape.y / ty)
@@ -181,40 +173,47 @@ class BFArrayStore(ReadOnlyStore):
             ny = 1
             nx = 1
 
-        # Generate keys for effective shape (RGB handled, singletons squeezed)
-        keys: set[str] = set()
-
-        # Build ranges for each dimension
-        t_range = range(shape.t)
-        if self._rgb_as_channels:
-            c_range = range(shape.c * shape.rgb)
-        else:
-            c_range = range(shape.c)
-        z_range = range(shape.z)
-        yi_range = range(ny)
-        xi_range = range(nx)
-
-        # Build ranges list (5D or 6D depending on RGB mode)
-        # Add RGB range if present (always range(1) - never chunk along RGB)
-        ranges = [t_range, c_range, z_range, yi_range, xi_range]
+        c_size = shape.c * shape.rgb if self._rgb_as_channels else shape.c
+        sizes = [shape.t, c_size, shape.z, ny, nx]
         if not self._rgb_as_channels and shape.rgb > 1:
-            ranges.append(range(1))  # Single chunk for RGB dimension
+            sizes.append(1)
+        return tuple(compress(sizes, self._dim_filter))
 
-        # Apply dimension filter to generate squeezed keys
-        for indices in product(*compress(ranges, self._dim_filter)):
-            keys.add(f"c/{'/'.join(str(i) for i in indices)}")
+    def _chunk_key_ranges(self) -> list[range]:
+        """Return ranges for chunk-key enumeration."""
+        return [range(size) for size in self._chunk_index_shape]
 
-        self._chunk_keys = keys
-        return keys
+    def _iter_chunk_keys(self) -> Iterator[str]:
+        """Yield all valid chunk keys in deterministic order."""
+        for indices in product(*self._chunk_key_ranges()):
+            yield f"c/{'/'.join(str(i) for i in indices)}"
 
-    def _parse_chunk_key(self, key: str) -> tuple[int, int, int, int, int]:
+    def _is_valid_chunk_key(self, key: str) -> bool:
+        """Return True if *key* is a valid chunk key for this array."""
+        parts = key.split("/")
+        expected_len = 1 + len(self._chunk_index_shape)
+        if not parts or parts[0] != "c" or len(parts) != expected_len:
+            return False
+
+        for part, size in zip(parts[1:], self._chunk_index_shape, strict=True):
+            if not part.isdigit():
+                return False
+            index = int(part)
+            if index < 0 or index >= size:
+                return False
+        return True
+
+    def _parse_chunk_key(self, key: str) -> tuple[int, int, int, int, int] | None:
         """Parse squeezed chunk key to (t, c, z, yi, xi) coordinates.
 
         Note: Returns 5D TCZYX coordinates. If key includes RGB coordinate
         (for 6D arrays), it's ignored since RGB is always 0.
         """
+        if not self._is_valid_chunk_key(key):
+            return None
+
         parts = key.split("/")
-        squeezed_indices = (int(p) for p in parts[1:])  # Skip "c" prefix
+        squeezed_indices = (int(p) for p in parts[1:])
 
         # Map squeezed indices back to full dimensions (5D or 6D)
         # We always return 5D (TCZYX), ignoring RGB coordinate if present
@@ -229,9 +228,9 @@ class BFArrayStore(ReadOnlyStore):
         # Return only TCZYX (first 5), dropping RGB coordinate if present
         return tuple(full_indices[:5])  # type: ignore[return-value]
 
-    def _read_chunk(self, key: str) -> bytes:
+    def _read_chunk(self, coords: tuple[int, int, int, int, int]) -> bytes:
         """Read a chunk by its key and return raw bytes."""
-        t, c_eff, z, yi, xi = self._parse_chunk_key(key)
+        t, c_eff, z, yi, xi = coords
 
         # Map effective C back to base (c, rgb_sample) if RGB interleaved as channels
         if self._rgb_as_channels:
@@ -305,9 +304,9 @@ class BFArrayStore(ReadOnlyStore):
     ) -> Buffer | None:
         if key == "zarr.json":
             data = self._array_metadata()
-        elif key in self._get_chunk_keys():
+        elif (coords := self._parse_chunk_key(key)) is not None:
             with self._biofile.ensure_open():
-                data = self._read_chunk(key)
+                data = self._read_chunk(coords)
         else:
             return None
 
@@ -316,11 +315,11 @@ class BFArrayStore(ReadOnlyStore):
         return prototype.buffer.from_bytes(data)
 
     async def exists(self, key: str) -> bool:
-        return key == "zarr.json" or key in self._get_chunk_keys()
+        return key == "zarr.json" or self._is_valid_chunk_key(key)
 
     async def list(self) -> AsyncIterator[str]:
         yield "zarr.json"
-        for key in self._get_chunk_keys():
+        for key in self._iter_chunk_keys():
             yield key
 
     def close(self) -> None:

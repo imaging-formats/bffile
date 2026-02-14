@@ -207,3 +207,23 @@ def test_multi_resolution(pyramid_file: Path) -> None:
     assert isinstance(res0, zarr.Array)
     res2 = series["2"]
     assert isinstance(res2, zarr.Array)
+
+
+def test_invalid_keys_return_none_and_false(simple_file: Path) -> None:
+    """Malformed or out-of-range keys should not raise from get()/exists()."""
+    with BioFile(simple_file) as bf:
+        store = bf.as_zarr_group()
+        proto = default_buffer_prototype()
+
+        invalid_keys = [
+            "foo/zarr.json",
+            "x/0/zarr.json",
+            "999/zarr.json",
+            "0/x/zarr.json",
+            "0/999/zarr.json",
+            "0/0/c/not-an-int",
+        ]
+
+        for key in invalid_keys:
+            assert asyncio.run(store.get(key, proto)) is None
+            assert not asyncio.run(store.exists(key))

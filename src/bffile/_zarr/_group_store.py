@@ -264,6 +264,7 @@ class BFOmeZarrStore(ReadOnlyStore):
         width_0 = meta_0.shape.x
         height_0 = meta_0.shape.y
         depth_0 = meta_0.shape.z
+        store_0 = self._get_array_store(series, 0)
 
         for res in range(resolution_count):
             # Dataset path
@@ -284,7 +285,6 @@ class BFOmeZarrStore(ReadOnlyStore):
 
             # Build coordinate transforms (scale values)
             # Physical size * downsampling factor = effective pixel size
-            store_0 = self._get_array_store(series, 0)
             all_scales = [
                 1.0,  # T
                 1.0,  # C
@@ -340,24 +340,45 @@ class BFOmeZarrStore(ReadOnlyStore):
         if (parsed := ParsedPath.from_key(key)) is None:
             return None
 
-        match parsed:
-            case PathLevel.ROOT, _, _, _:
-                data = self._build_root_metadata()
-            case PathLevel.OME_GROUP, _, _, _:
-                data = self._build_ome_metadata()
-            case PathLevel.OME_METADATA, _, _, _:
-                data = self._biofile.ome_xml.encode()
-            case PathLevel.MULTISCALES_GROUP, series, _, _:
-                data = self._build_multiscales_metadata(series)  # type: ignore
-            case PathLevel.ARRAY_METADATA, series, resolution, _:
-                store = self._get_array_store(series, resolution)  # type: ignore
-                return await store.get("zarr.json", prototype, byte_range)
-            case PathLevel.CHUNK, series, resolution, chunk_key:
-                store = self._get_array_store(series, resolution)  # type: ignore
-                with self._biofile.ensure_open():
-                    return await store.get(chunk_key, prototype, byte_range)  # type: ignore
-            case _:
+        if parsed.level == PathLevel.ROOT:
+            data = self._build_root_metadata()
+        elif parsed.level == PathLevel.OME_GROUP:
+            data = self._build_ome_metadata()
+        elif parsed.level == PathLevel.OME_METADATA:
+            data = self._biofile.ome_xml.encode()
+        elif parsed.level == PathLevel.MULTISCALES_GROUP:
+            series = parsed.series
+            if series is None or not (0 <= series < len(self._biofile)):
                 return None
+            data = self._build_multiscales_metadata(series)
+        elif parsed.level == PathLevel.ARRAY_METADATA:
+            series = parsed.series
+            resolution = parsed.resolution
+            if series is None or resolution is None:
+                return None
+            if not (0 <= series < len(self._biofile)):
+                return None
+            meta = self._biofile[series].core_metadata()
+            if not (0 <= resolution < meta.resolution_count):
+                return None
+            store = self._get_array_store(series, resolution)
+            return await store.get("zarr.json", prototype, byte_range)
+        elif parsed.level == PathLevel.CHUNK:
+            series = parsed.series
+            resolution = parsed.resolution
+            chunk_key = parsed.chunk_key
+            if series is None or resolution is None or chunk_key is None:
+                return None
+            if not (0 <= series < len(self._biofile)):
+                return None
+            meta = self._biofile[series].core_metadata()
+            if not (0 <= resolution < meta.resolution_count):
+                return None
+            store = self._get_array_store(series, resolution)
+            with self._biofile.ensure_open():
+                return await store.get(chunk_key, prototype, byte_range)
+        else:
+            return None
 
         # Apply byte range if requested
         if byte_range is not None:
@@ -476,11 +497,9 @@ class PathLevel(Enum):
     ROOT = auto()
     OME_GROUP = auto()
     OME_METADATA = auto()
-    SERIES_GROUP = auto()
     MULTISCALES_GROUP = auto()
     ARRAY_METADATA = auto()
     CHUNK = auto()
-    UNKNOWN = auto()
 
 
 class ParsedPath(NamedTuple):
@@ -490,6 +509,13 @@ class ParsedPath(NamedTuple):
     series: int | None = None
     resolution: int | None = None
     chunk_key: str | None = None
+
+    @staticmethod
+    def _to_int(value: str) -> int | None:
+        try:
+            return int(value)
+        except ValueError:
+            return None
 
     @classmethod
     def from_key(cls, key: str) -> ParsedPath | None:
@@ -511,11 +537,21 @@ class ParsedPath(NamedTuple):
             case ["OME", "METADATA.ome.xml"]:
                 return cls(PathLevel.OME_METADATA)
             case [series, "zarr.json"]:
-                return cls(PathLevel.MULTISCALES_GROUP, int(series))
+                if (series_i := cls._to_int(series)) is None:
+                    return None
+                return cls(PathLevel.MULTISCALES_GROUP, series_i)
             case [series, resolution, "zarr.json"]:
-                return cls(PathLevel.ARRAY_METADATA, int(series), int(resolution))
+                series_i = cls._to_int(series)
+                resolution_i = cls._to_int(resolution)
+                if series_i is None or resolution_i is None:
+                    return None
+                return cls(PathLevel.ARRAY_METADATA, series_i, resolution_i)
             case [series, resolution, "c", *rest]:
+                series_i = cls._to_int(series)
+                resolution_i = cls._to_int(resolution)
+                if series_i is None or resolution_i is None:
+                    return None
                 chunk_key = "/".join(["c", *rest])
-                return cls(PathLevel.CHUNK, int(series), int(resolution), chunk_key)
+                return cls(PathLevel.CHUNK, series_i, resolution_i, chunk_key)
             case _:
                 return None

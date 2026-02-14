@@ -133,3 +133,22 @@ def test_data_matches_multiseries(multiseries_file: Path) -> None:
             # Compare a plane from each series
             expected = bf.read_plane(t=1, c=0, z=2, series=series.index)
             np.testing.assert_array_equal(zarr_arr[1, 0, 2], expected)
+
+
+def test_invalid_chunk_keys(simple_file: Path) -> None:
+    """Malformed chunk keys should return None/False and never raise."""
+    with BioFile(simple_file) as bf:
+        store = bf.as_array().zarr_store()
+        proto = default_buffer_prototype()
+        invalid_keys = [
+            "c",
+            "c/",
+            "c/x/0/0/0/0",
+            "c/0/0/0/0",
+            "c/0/0/0/0/0/0",
+            "c/999/0/0/0/0",
+        ]
+
+        for key in invalid_keys:
+            assert asyncio.run(store.get(key, proto)) is None
+            assert not asyncio.run(store.exists(key))
