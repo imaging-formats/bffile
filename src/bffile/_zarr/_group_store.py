@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from enum import Enum, auto
+from itertools import compress
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import zarr
@@ -275,26 +276,23 @@ class BFOmeZarrStore(ReadOnlyStore):
             depth_r = meta_r.shape.z
 
             # Calculate downsampling factors (how much smaller this resolution is)
-            x_factor = width_0 / width_r if width_r > 0 else 1.0
-            y_factor = height_0 / height_r if height_r > 0 else 1.0
-            z_factor = depth_0 / depth_r if depth_r > 0 else 1.0
+            factors = {
+                "x": width_0 / width_r if width_r > 0 else 1.0,
+                "y": height_0 / height_r if height_r > 0 else 1.0,
+                "z": depth_0 / depth_r if depth_r > 0 else 1.0,
+            }
 
             # Build coordinate transforms (scale values)
             # Physical size * downsampling factor = effective pixel size
-            # Only include scales for dimensions that are present (use same filter)
-            # Use array store's dimension filter (single source of truth)
             store_0 = self._get_array_store(series, 0)
-            dim_filter = store_0._dim_filter
             all_scales = [
                 1.0,  # T
                 1.0,  # C
-                (pps.z * z_factor) if pps.z is not None else z_factor,  # Z
-                (pps.y * y_factor) if pps.y is not None else y_factor,  # Y
-                (pps.x * x_factor) if pps.x is not None else x_factor,  # X
+                (pps.z * factors["z"]) if pps.z is not None else factors["z"],
+                (pps.y * factors["y"]) if pps.y is not None else factors["y"],
+                (pps.x * factors["x"]) if pps.x is not None else factors["x"],
             ]
-            scale = [
-                s for s, include in zip(all_scales, dim_filter, strict=False) if include
-            ]
+            scale = list(compress(all_scales, store_0._dim_filter))
 
             dataset["coordinateTransformations"] = [{"type": "scale", "scale": scale}]
             datasets.append(dataset)
@@ -508,53 +506,20 @@ class ParsedPath(NamedTuple):
         - {series}/zarr.json → series/multiscales group metadata
         - {series}/{resolution}/zarr.json → array metadata
         - {series}/{resolution}/c/... → chunk data
-
-        Parameters
-        ----------
-        key : str
-            The zarr key to parse.
-
-        Returns
-        -------
-        ParsedPath
-            Structured information about the path.
         """
-        if key == "zarr.json":
-            return cls(PathLevel.ROOT)
-
-        if key == "OME/zarr.json":
-            return cls(PathLevel.OME_GROUP)
-
-        if key == "OME/METADATA.ome.xml":
-            return cls(PathLevel.OME_METADATA)
-
-        parts = key.split("/")
-
-        # Series/multiscales group: {series}/zarr.json
-        if len(parts) == 2 and parts[1] == "zarr.json":
-            return cls(PathLevel.MULTISCALES_GROUP, series=int(parts[0]))
-
-        # Array metadata: {series}/{resolution}/zarr.json
-        if len(parts) == 3 and parts[2] == "zarr.json":
-            series = int(parts[0])
-            resolution = int(parts[1])
-            return cls(
-                level=PathLevel.ARRAY_METADATA,
-                series=series,
-                resolution=resolution,
-            )
-
-        # Chunk data: {series}/{resolution}/c/...
-        if len(parts) >= 4 and parts[2] == "c":
-            series = int(parts[0])
-            resolution = int(parts[1])
-            # Reconstruct chunk key: "c/t/c/z/yi/xi" or "c/t/c/z/yi/xi/0"
-            chunk_key = "/".join(parts[2:])
-            return cls(
-                level=PathLevel.CHUNK,
-                series=series,
-                resolution=resolution,
-                chunk_key=chunk_key,
-            )
-
-        return None
+        match key.split("/"):
+            case ["zarr.json"]:
+                return cls(PathLevel.ROOT)
+            case ["OME", "zarr.json"]:
+                return cls(PathLevel.OME_GROUP)
+            case ["OME", "METADATA.ome.xml"]:
+                return cls(PathLevel.OME_METADATA)
+            case [series, "zarr.json"]:
+                return cls(PathLevel.MULTISCALES_GROUP, int(series))
+            case [series, resolution, "zarr.json"]:
+                return cls(PathLevel.ARRAY_METADATA, int(series), int(resolution))
+            case [series, resolution, "c", *rest]:
+                chunk_key = "/".join(["c", *rest])
+                return cls(PathLevel.CHUNK, int(series), int(resolution), chunk_key)
+            case _:
+                return None
