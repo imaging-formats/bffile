@@ -3,23 +3,22 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple
 
 import zarr
-from zarr.abc.store import OffsetByteRequest, RangeByteRequest, Store, SuffixByteRequest
 from zarr.core.buffer import default_buffer_prototype
 from zarr.core.sync import sync
 
 from bffile._utils import physical_pixel_sizes
+from bffile._zarr._base_store import ReadOnlyStore
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable
+    from collections.abc import AsyncIterator
 
     from ome_types import OME
     from pint import Quantity
-    from zarr.abc.store import ByteRequest
+    from zarr.abc.store import ByteRequest, Store
     from zarr.core.buffer import Buffer, BufferPrototype
     from zarr.storage import StoreLike
 
@@ -96,14 +95,75 @@ class PathLevel(Enum):
     UNKNOWN = auto()
 
 
-@dataclass(frozen=True)
-class ParsedPath:
+class ParsedPath(NamedTuple):
     """Structured information parsed from a zarr path."""
 
     level: PathLevel
     series: int | None = None
     resolution: int | None = None
     chunk_key: str | None = None
+
+    @classmethod
+    def from_key(cls, key: str) -> ParsedPath | None:
+        """Parse a zarr key and return structured path information.
+
+        Path patterns (NGFF v0.5):
+        - zarr.json → root group metadata
+        - OME/zarr.json → OME group metadata
+        - OME/METADATA.ome.xml → OME-XML string
+        - {series}/zarr.json → series/multiscales group metadata
+        - {series}/{resolution}/zarr.json → array metadata
+        - {series}/{resolution}/c/... → chunk data
+
+        Parameters
+        ----------
+        key : str
+            The zarr key to parse.
+
+        Returns
+        -------
+        ParsedPath
+            Structured information about the path.
+        """
+        if key == "zarr.json":
+            return cls(PathLevel.ROOT)
+
+        if key == "OME/zarr.json":
+            return cls(PathLevel.OME_GROUP)
+
+        if key == "OME/METADATA.ome.xml":
+            return cls(PathLevel.OME_METADATA)
+
+        parts = key.split("/")
+
+        # Series/multiscales group: {series}/zarr.json
+        if len(parts) == 2 and parts[1] == "zarr.json":
+            return cls(PathLevel.MULTISCALES_GROUP, series=int(parts[0]))
+
+        # Array metadata: {series}/{resolution}/zarr.json
+        if len(parts) == 3 and parts[2] == "zarr.json":
+            series = int(parts[0])
+            resolution = int(parts[1])
+            return cls(
+                level=PathLevel.ARRAY_METADATA,
+                series=series,
+                resolution=resolution,
+            )
+
+        # Chunk data: {series}/{resolution}/c/...
+        if len(parts) >= 4 and parts[2] == "c":
+            series = int(parts[0])
+            resolution = int(parts[1])
+            # Reconstruct chunk key: "c/t/c/z/yi/xi" or "c/t/c/z/yi/xi/0"
+            chunk_key = "/".join(parts[2:])
+            return cls(
+                level=PathLevel.CHUNK,
+                series=series,
+                resolution=resolution,
+                chunk_key=chunk_key,
+            )
+
+        return None
 
 
 def _extract_ngff_unit(
@@ -131,83 +191,7 @@ def _extract_ngff_unit(
     return None
 
 
-class PathRouter:
-    """Parses hierarchical zarr keys into structured information."""
-
-    @staticmethod
-    def parse(key: str) -> ParsedPath:
-        """Parse a zarr key and return structured path information.
-
-        Path patterns (NGFF v0.5):
-        - zarr.json → root group metadata
-        - OME/zarr.json → OME group metadata
-        - OME/METADATA.ome.xml → OME-XML string
-        - {series}/zarr.json → series/multiscales group metadata
-        - {series}/{resolution}/zarr.json → array metadata
-        - {series}/{resolution}/c/... → chunk data
-
-        Parameters
-        ----------
-        key : str
-            The zarr key to parse.
-
-        Returns
-        -------
-        ParsedPath
-            Structured information about the path.
-        """
-        if key == "zarr.json":
-            return ParsedPath(level=PathLevel.ROOT)
-
-        if key == "OME/zarr.json":
-            return ParsedPath(level=PathLevel.OME_GROUP)
-
-        if key == "OME/METADATA.ome.xml":
-            return ParsedPath(level=PathLevel.OME_METADATA)
-
-        parts = key.split("/")
-
-        # Series/multiscales group: {series}/zarr.json
-        if len(parts) == 2 and parts[1] == "zarr.json":
-            try:
-                series = int(parts[0])
-                return ParsedPath(level=PathLevel.MULTISCALES_GROUP, series=series)
-            except ValueError:
-                return ParsedPath(level=PathLevel.UNKNOWN)
-
-        # Array metadata: {series}/{resolution}/zarr.json
-        if len(parts) == 3 and parts[2] == "zarr.json":
-            try:
-                series = int(parts[0])
-                resolution = int(parts[1])
-                return ParsedPath(
-                    level=PathLevel.ARRAY_METADATA,
-                    series=series,
-                    resolution=resolution,
-                )
-            except ValueError:
-                return ParsedPath(level=PathLevel.UNKNOWN)
-
-        # Chunk data: {series}/{resolution}/c/...
-        if len(parts) >= 4 and parts[2] == "c":
-            try:
-                series = int(parts[0])
-                resolution = int(parts[1])
-                # Reconstruct chunk key: "c/t/c/z/yi/xi" or "c/t/c/z/yi/xi/0"
-                chunk_key = "/".join(parts[2:])
-                return ParsedPath(
-                    level=PathLevel.CHUNK,
-                    series=series,
-                    resolution=resolution,
-                    chunk_key=chunk_key,
-                )
-            except ValueError:
-                return ParsedPath(level=PathLevel.UNKNOWN)
-
-        return ParsedPath(level=PathLevel.UNKNOWN)
-
-
-class BFOmeZarrStore(Store):
+class BFOmeZarrStore(ReadOnlyStore):
     """Read-only zarr v3 group store for complete Bio-Formats file hierarchy.
 
     Virtualizes an entire Bio-Formats file as an OME-ZARR group containing
@@ -479,7 +463,9 @@ class BFOmeZarrStore(Store):
         byte_range: ByteRequest | None = None,
     ) -> Buffer | None:
         """Get data for a key in the zarr hierarchy."""
-        parsed = PathRouter.parse(key)
+
+        if (parsed := ParsedPath.from_key(key)) is None:
+            return None
 
         # Route to appropriate handler
         if parsed.level == PathLevel.ROOT:
@@ -506,24 +492,16 @@ class BFOmeZarrStore(Store):
 
         # Apply byte range if requested
         if byte_range is not None:
-            data = _apply_byte_range(data, byte_range)
+            data = self._apply_byte_range(data, byte_range)
 
         return prototype.buffer.from_bytes(data)
 
-    async def get_partial_values(
-        self,
-        prototype: BufferPrototype,
-        key_ranges: Iterable[tuple[str, ByteRequest | None]],
-    ) -> list[Buffer | None]:
-        return [
-            await self.get(key, prototype, byte_range) for key, byte_range in key_ranges
-        ]
-
     async def exists(self, key: str) -> bool:
         """Check if a key exists in the hierarchy."""
-        parsed = PathRouter.parse(key)
-
-        if parsed.level == PathLevel.UNKNOWN:
+        try:
+            if (parsed := ParsedPath.from_key(key)) is None:
+                return False
+        except ValueError:
             return False
 
         # Root, OME group, and OME metadata always exist
@@ -557,24 +535,6 @@ class BFOmeZarrStore(Store):
 
         return False
 
-    async def set(self, key: str, value: Buffer) -> None:
-        raise PermissionError(f"{type(self).__name__} is read-only")
-
-    async def delete(self, key: str) -> None:
-        raise PermissionError(f"{type(self).__name__} is read-only")
-
-    @property
-    def supports_writes(self) -> bool:
-        return False
-
-    @property
-    def supports_deletes(self) -> bool:
-        return False
-
-    @property
-    def supports_listing(self) -> bool:
-        return True
-
     async def list(self) -> AsyncIterator[str]:
         """List all valid keys in the hierarchy."""
         # Root metadata
@@ -603,28 +563,6 @@ class BFOmeZarrStore(Store):
                     if chunk_key != "zarr.json":
                         yield f"{series_idx}/{res_idx}/{chunk_key}"
 
-    async def list_prefix(self, prefix: str) -> AsyncIterator[str]:
-        async for key in self.list():
-            if key.startswith(prefix):
-                yield key
-
-    async def list_dir(self, prefix: str) -> AsyncIterator[str]:
-        seen: set[str] = set()
-        async for key in self.list():
-            if not key.startswith(prefix):
-                continue
-            remainder = key[len(prefix) :]
-            if remainder and remainder[0] == "/":
-                remainder = remainder[1:]
-            child = remainder.split("/")[0] if remainder else ""
-            if child and child not in seen:
-                seen.add(child)
-                yield child
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     def close(self) -> None:
         """Close the store and all cached array stores."""
         self._is_open = False
@@ -632,42 +570,11 @@ class BFOmeZarrStore(Store):
             store.close()
         self._array_stores.clear()
 
-    async def _close(self) -> None:
-        self.close()
-
-    def __enter__(self) -> BFOmeZarrStore:
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        self.close()
-
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}({self._biofile.filename!r}, "
             f"series_count={len(self._biofile)})"
         )
-
-    # ------------------------------------------------------------------
-    # These are removed from the Store ABC ... just here in the off chance that someone
-    # installs zarr 3.1
-
-    def set_partial_values(  # pragma: no cover
-        self,
-        prototype: BufferPrototype,
-        key_value_ranges: Iterable[tuple[str, Buffer, ByteRequest | None]],
-    ) -> AsyncIterator[None]:
-        raise PermissionError(f"{type(self).__name__} is read-only")
-
-    @property
-    def supports_partial_writes(self) -> Literal[False]:  # pragma: no cover
-        return False
-
-    async def _copy_to(self, dest: Store) -> None:
-        proto = default_buffer_prototype()
-        async for key in self.list():
-            buf = await self.get(key, prototype=proto)
-            if buf is not None:
-                await dest.set(key, buf)
 
     def save(self, dest: StoreLike) -> None:
         """Save the store contents to the given `dest`.
@@ -682,14 +589,9 @@ class BFOmeZarrStore(Store):
         group = zarr.open_group(dest, mode="w")
         sync(self._copy_to(group.store))
 
-
-def _apply_byte_range(data: bytes, byte_range: ByteRequest) -> bytes:
-    """Slice *data* according to a zarr ByteRequest."""
-    n = len(data)
-    if isinstance(byte_range, RangeByteRequest):
-        return data[byte_range.start : byte_range.end]
-    if isinstance(byte_range, OffsetByteRequest):
-        return data[byte_range.offset :]
-    if isinstance(byte_range, SuffixByteRequest):
-        return data[n - byte_range.suffix :]
-    raise TypeError(f"Unexpected byte_range type: {type(byte_range)}")
+    async def _copy_to(self, dest: Store) -> None:
+        proto = default_buffer_prototype()
+        async for key in self.list():
+            buf = await self.get(key, prototype=proto)
+            if buf is not None:
+                await dest.set(key, buf)

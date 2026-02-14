@@ -4,27 +4,25 @@ from __future__ import annotations
 
 import json
 import math
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from zarr.abc.store import (
-    ByteRequest,
-    OffsetByteRequest,
-    RangeByteRequest,
-    Store,
-    SuffixByteRequest,
-)
+
+from bffile._zarr._base_store import ReadOnlyStore
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterable
+    from collections.abc import AsyncIterator
 
+    from zarr.abc.store import (
+        ByteRequest,
+    )
     from zarr.core.buffer import Buffer, BufferPrototype
 
     from bffile._biofile import BioFile
     from bffile._lazy_array import LazyBioArray
 
 
-class BFArrayStore(Store):
+class BFArrayStore(ReadOnlyStore):
     """Read-only zarr v3 store that virtualizes a Bio-Formats file.
 
     Each zarr chunk maps to a single ``read_plane()`` call, producing raw
@@ -348,7 +346,7 @@ class BFArrayStore(Store):
     # ------------------------------------------------------------------
 
     def __eq__(self, value: object) -> bool:
-        if not isinstance(value, BFArrayStore):
+        if not isinstance(value, type(self)):
             return NotImplemented
         return (
             self._biofile.filename == value._biofile.filename
@@ -372,77 +370,21 @@ class BFArrayStore(Store):
             return None
 
         if byte_range is not None:
-            data = _apply_byte_range(data, byte_range)
+            data = self._apply_byte_range(data, byte_range)
 
         return prototype.buffer.from_bytes(data)
 
-    async def get_partial_values(
-        self,
-        prototype: BufferPrototype,
-        key_ranges: Iterable[tuple[str, ByteRequest | None]],
-    ) -> list[Buffer | None]:
-        return [
-            await self.get(key, prototype, byte_range) for key, byte_range in key_ranges
-        ]
-
     async def exists(self, key: str) -> bool:
         return key == "zarr.json" or key in self._get_chunk_keys()
-
-    async def set(self, key: str, value: Buffer) -> None:
-        raise PermissionError("BioFormatsStore is read-only")
-
-    async def delete(self, key: str) -> None:
-        raise PermissionError("BioFormatsStore is read-only")
-
-    @property
-    def supports_writes(self) -> bool:
-        return False
-
-    @property
-    def supports_deletes(self) -> bool:
-        return False
-
-    @property
-    def supports_listing(self) -> bool:
-        return True
 
     async def list(self) -> AsyncIterator[str]:
         yield "zarr.json"
         for key in self._get_chunk_keys():
             yield key
 
-    async def list_prefix(self, prefix: str) -> AsyncIterator[str]:
-        async for key in self.list():
-            if key.startswith(prefix):
-                yield key
-
-    async def list_dir(self, prefix: str) -> AsyncIterator[str]:
-        seen: set[str] = set()
-        async for key in self.list():
-            if not key.startswith(prefix):
-                continue
-            remainder = key[len(prefix) :]
-            child = remainder.split("/")[0]
-            if child and child not in seen:
-                seen.add(child)
-                yield child
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     def close(self) -> None:
         """Close the store (and owned BioFile, if any)."""
         self._is_open = False
-
-    async def _close(self) -> None:
-        self.close()
-
-    def __enter__(self) -> BFArrayStore:
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        self.close()
 
     def __repr__(self) -> str:
         arr = self._lazy_array
@@ -450,30 +392,3 @@ class BFArrayStore(Store):
             f"BioFormatsStore({self._biofile.filename!r}, "
             f"series={arr._series}, shape={arr.shape})"
         )
-
-    # ------------------------------------------------------------------
-    # These are removed from the Store ABC ... just here in the off chance that someone
-    # installs zarr 3.1
-
-    def set_partial_values(  # pragma: no cover
-        self,
-        prototype: BufferPrototype,
-        key_value_ranges: Iterable[tuple[str, Buffer, ByteRequest | None]],
-    ) -> AsyncIterator[None]:
-        raise PermissionError("BioFormatsStore is read-only")
-
-    @property
-    def supports_partial_writes(self) -> Literal[False]:  # pragma: no cover
-        return False
-
-
-def _apply_byte_range(data: bytes, byte_range: ByteRequest) -> bytes:
-    """Slice *data* according to a zarr ByteRequest."""
-    n = len(data)
-    if isinstance(byte_range, RangeByteRequest):
-        return data[byte_range.start : byte_range.end]
-    if isinstance(byte_range, OffsetByteRequest):
-        return data[byte_range.offset :]
-    if isinstance(byte_range, SuffixByteRequest):
-        return data[n - byte_range.suffix :]
-    raise TypeError(f"Unexpected byte_range type: {type(byte_range)}")
