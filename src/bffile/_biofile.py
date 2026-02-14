@@ -1009,12 +1009,12 @@ class BioFile(Sequence[Series]):
 
             reader.openBytes(plane_idx, tile_buffer, x_start, y_start + y0, width, h)  # pyright: ignore[reportArgumentType]
 
-            # View tile data (count is elements, not bytes)
+            # Copy tile data (count is elements, not bytes)
             tile_data = np.frombuffer(
                 memoryview(tile_buffer),  # pyright: ignore[reportArgumentType]
                 dtype=meta.dtype,
                 count=h * width * shape.rgb,
-            )
+            ).copy()
 
             # Copy to output
             if shape.rgb > 1:
