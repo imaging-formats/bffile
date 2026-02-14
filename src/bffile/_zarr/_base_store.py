@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from zarr.abc.store import (
     ByteRequest,
@@ -15,7 +15,6 @@ from zarr.abc.store import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable
 
-    from typing_extensions import Self
     from zarr.abc.store import ByteRequest
     from zarr.core.buffer import Buffer, BufferPrototype
 
@@ -26,34 +25,34 @@ class ReadOnlyStore(Store):
         prototype: BufferPrototype,
         key_ranges: Iterable[tuple[str, ByteRequest | None]],
     ) -> list[Buffer | None]:
-        return [
+        return [  # pragma: no cover
             await self.get(key, prototype, byte_range) for key, byte_range in key_ranges
         ]
 
-    async def set(self, key: str, value: Buffer) -> None:
+    async def set(self, key: str, value: Buffer) -> None:  # pragma: no cover
         raise PermissionError(f"{type(self).__name__} is read-only")
 
-    async def delete(self, key: str) -> None:
+    async def delete(self, key: str) -> None:  # pragma: no cover
         raise PermissionError(f"{type(self).__name__} is read-only")
 
     @property
-    def supports_writes(self) -> bool:
+    def supports_writes(self) -> bool:  # pragma: no cover
         return False
 
     @property
-    def supports_deletes(self) -> bool:
+    def supports_deletes(self) -> bool:  # pragma: no cover
         return False
 
     @property
-    def supports_listing(self) -> bool:
+    def supports_listing(self) -> bool:  # pragma: no cover
         return True
 
-    async def list_prefix(self, prefix: str) -> AsyncIterator[str]:
+    async def list_prefix(self, prefix: str) -> AsyncIterator[str]:  # pragma: no cover
         async for key in self.list():
             if key.startswith(prefix):
                 yield key
 
-    async def list_dir(self, prefix: str) -> AsyncIterator[str]:
+    async def list_dir(self, prefix: str) -> AsyncIterator[str]:  # pragma: no cover
         seen: set[str] = set()
         async for key in self.list():
             if not key.startswith(prefix):
@@ -65,15 +64,6 @@ class ReadOnlyStore(Store):
             if child and child not in seen:
                 seen.add(child)
                 yield child
-
-    async def _close(self) -> None:
-        self.close()
-
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        self.close()
 
     # ------------------------------------------------------------------
     # These are removed from the Store ABC ... just here in the off chance that someone
@@ -100,4 +90,6 @@ class ReadOnlyStore(Store):
             return data[byte_range.offset :]
         if isinstance(byte_range, SuffixByteRequest):
             return data[n - byte_range.suffix :]
-        raise TypeError(f"Unexpected byte_range type: {type(byte_range)}")
+        raise TypeError(  # pragma: no cover
+            f"Unexpected byte_range type: {type(byte_range)}"
+        )
