@@ -153,7 +153,9 @@ class LazyBioArray:
         from bffile._zarr import BFArrayStore
 
         return BFArrayStore(
-            self,
+            self._biofile,
+            self._series,
+            self._resolution,
             tile_size=tile_size,
             rgb_as_channels=rgb_as_channels,
             squeeze_singletons=squeeze_singletons,
