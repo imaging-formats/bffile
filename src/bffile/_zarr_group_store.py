@@ -18,13 +18,68 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterable
 
     from ome_types import OME
+    from pint import Quantity
     from zarr.abc.store import ByteRequest
     from zarr.core.buffer import Buffer, BufferPrototype
     from zarr.storage import StoreLike
 
     from bffile._biofile import BioFile
     from bffile._core_metadata import CoreMetadata
-    from bffile._zarr_store import BioFormatsStore
+
+
+# NGFF v0.5 specification unit whitelists
+# https://ngff.openmicroscopy.org/v0.5/#axes-md
+NGFF_LENGTH_UNITS = frozenset(
+    [
+        "angstrom",
+        "attometer",
+        "centimeter",
+        "decimeter",
+        "exameter",
+        "femtometer",
+        "foot",
+        "gigameter",
+        "hectometer",
+        "inch",
+        "kilometer",
+        "megameter",
+        "meter",
+        "micrometer",
+        "millimeter",
+        "nanometer",
+        "petameter",
+        "picometer",
+        "terameter",
+        "yottameter",
+        "zeptometer",
+        "zettameter",
+    ]
+)
+NGFF_TIME_UNITS = frozenset(
+    [
+        "attosecond",
+        "centisecond",
+        "day",
+        "decisecond",
+        "exasecond",
+        "femtosecond",
+        "gigasecond",
+        "hectosecond",
+        "hour",
+        "kilosecond",
+        "megasecond",
+        "microsecond",
+        "millisecond",
+        "minute",
+        "nanosecond",
+        "picosecond",
+        "second",
+        "terasecond",
+        "yottasecond",
+        "zeptosecond",
+        "zettasecond",
+    ]
+)
 
 
 class PathLevel(Enum):
@@ -48,6 +103,77 @@ class ParsedPath:
     series: int | None = None
     resolution: int | None = None
     chunk_key: str | None = None
+
+
+def _get_effective_shape(meta: CoreMetadata) -> tuple[int, ...]:
+    """Get effective shape with RGB expanded into C dimension.
+
+    Returns
+    -------
+    tuple[int, ...]
+        Shape as (T, C_effective, Z, Y, X) where C_effective = C * RGB
+    """
+    return (
+        meta.shape.t,
+        meta.shape.c * meta.shape.rgb,  # Expand RGB into C
+        meta.shape.z,
+        meta.shape.y,
+        meta.shape.x,
+    )
+
+
+def _get_dimension_filter(meta: CoreMetadata) -> list[bool]:
+    """Determine which dimensions to include (True) or omit (False).
+
+    **SINGLE SOURCE OF TRUTH** for dimension filtering across axes, scales,
+    and array shapes.
+
+    Omits dimensions with size 1, but always keeps Y and X (required by NGFF).
+    This matches bioformats2raw's --compact behavior.
+
+    Parameters
+    ----------
+    meta : CoreMetadata
+        Core metadata with shape information
+
+    Returns
+    -------
+    list[bool]
+        Boolean mask [T, C, Z, Y, X] indicating which dimensions to include
+    """
+    t, c_eff, z, _y, _x = _get_effective_shape(meta)
+    return [
+        t > 1,  # T: only if size > 1
+        c_eff > 1,  # C: only if size > 1 (RGB already expanded)
+        z > 1,  # Z: only if size > 1
+        True,  # Y: always include (NGFF requires 2 spatial dims)
+        True,  # X: always include (NGFF requires 2 spatial dims)
+    ]
+
+
+def _extract_ngff_unit(
+    quantity: Quantity | None, dimension_type: Literal["space", "time"]
+) -> str | None:
+    """Extract NGFF-compliant unit string from a pint Quantity.
+
+    If the OME metadata contains a unit not in the whitelist, we omit the unit
+    key from the axes metadata rather than writing an invalid value.
+    """
+    if quantity is None:
+        return None
+
+    # Extract unit string from pint Quantity
+    unit_str = str(quantity.units)
+
+    # Validate against NGFF whitelist
+    if dimension_type == "space":
+        if unit_str in NGFF_LENGTH_UNITS:
+            return unit_str
+    elif dimension_type == "time":
+        if unit_str in NGFF_TIME_UNITS:
+            return unit_str
+
+    return None
 
 
 class PathRouter:
@@ -153,6 +279,14 @@ class BioFormatsGroupStore(Store):
     tile_size : tuple[int, int], optional
         If provided, Y and X are chunked into tiles of this size.
 
+    Notes
+    -----
+    RGB images are represented as 6D arrays (TCZYXS) rather than expanding RGB
+    components into the C dimension. This differs from bioformats2raw which uses
+    ChannelSeparator to create 5D arrays with expanded channels. While this
+    approach works for most zarr tools, it may not be fully NGFF v0.5 compliant
+    for all use cases.
+
     Examples
     --------
     >>> with BioFile("image.nd2") as bf:
@@ -172,7 +306,7 @@ class BioFormatsGroupStore(Store):
         super().__init__(read_only=True)
         self._biofile = biofile
         self._tile_size = tile_size
-        self._array_stores: dict[tuple[int, int], BioFormatsStore] = {}
+        self._array_stores: dict[tuple[int, int], Store] = {}
         self._is_open = True
 
     # ------------------------------------------------------------------
@@ -215,14 +349,18 @@ class BioFormatsGroupStore(Store):
         This includes:
         - axes: Dimension information with types and units
         - datasets: List of resolution levels with coordinate transforms
+
+        Note
+        ----
+        RGB images are currently represented as 6D arrays (TCZYXS) which is not
+        strictly NGFF v0.5 compliant (spec recommends 5D with expanded C dimension).
+        A future enhancement would wrap the Bio-Formats reader with ChannelSeparator
+        to automatically split RGB into separate C channels, matching bioformats2raw
+        behavior. For now, RGB images are accessible but may not be fully compliant
+        with all NGFF tools.
         """
         meta = self._biofile[series].core_metadata()
         ome = self._biofile.ome_metadata
-
-        # NGFF v0.5 multiscales are limited to 5 dimensions
-        # RGB images (rgb > 1) create 6D arrays which are not supported
-        if meta.shape.rgb > 1:
-            raise NotImplementedError("RGB not yet implemented")
 
         # Build axes list (order: T, C, Z, Y, X)
         axes = self._build_axes(meta, ome, series)
@@ -254,81 +392,120 @@ class BioFormatsGroupStore(Store):
     ) -> list[dict[str, str]]:
         """Build axes list from metadata.
 
-        Order: T, C, Z, Y, X, [RGB] (standard OME-ZARR)
-        Include type (time/channel/space) and units where appropriate.
+        Omits singleton dimensions (size 1) except Y and X which are always
+        included per NGFF requirements. Uses _get_dimension_filter() as the
+        single source of truth.
 
-        Note: Always include all axes to match array dimensions.
-        Arrays are 5D (TCZYX) or 6D (TCZYXS) for RGB.
+        Units are extracted from OME-XML Quantity objects and validated against
+        NGFF v0.5 whitelists.
+
+        Note
+        ----
+        For RGB images, the C dimension is expanded to include RGB samples
+        (e.g., C=2 with RGB=3 becomes C=6).
         """
         axes: list[dict[str, str]] = []
+        pixels = ome.images[series].pixels
+        dim_filter = _get_dimension_filter(meta)
+        dim_names = ["t", "c", "z", "y", "x"]
+        dim_types = ["time", "channel", "space", "space", "space"]
 
-        # Time axis (always include)
-        axis: dict[str, str] = {"name": "t", "type": "time"}
-        # Try to get time unit from OME
-        if ome.images[series].pixels.time_increment is not None:
-            axis["unit"] = "millisecond"
-        axes.append(axis)
+        for include, name, dim_type in zip(
+            dim_filter, dim_names, dim_types, strict=False
+        ):
+            if not include:
+                continue
 
-        # Channel axis (always include)
-        axes.append({"name": "c", "type": "channel"})
+            axis: dict[str, str] = {"name": name, "type": dim_type}
 
-        # Spatial axes (always include)
-        for name in ["z", "y", "x"]:
-            axis = {"name": name, "type": "space"}
-            # Add units if available
-            physical_size = getattr(ome.images[series].pixels, f"physical_size_{name}")
-            if physical_size is not None:
-                axis["unit"] = "micrometer"
+            # Add units for time and spatial dimensions
+            if dim_type == "time":
+                if unit := _extract_ngff_unit(pixels.time_increment_quantity, "time"):
+                    axis["unit"] = unit
+            elif dim_type == "space":
+                quantity = getattr(pixels, f"physical_size_{name}_quantity")
+                if unit := _extract_ngff_unit(quantity, "space"):
+                    axis["unit"] = unit
+
             axes.append(axis)
-
-        # RGB/samples axis (only for RGB images with rgb > 1)
-        if meta.shape.rgb > 1:
-            axes.append({"name": "s", "type": "channel"})
 
         return axes
 
     def _build_datasets(
         self, meta: CoreMetadata, ome: OME, series: int
     ) -> list[dict[str, Any]]:
-        """Build datasets list with coordinate transforms for each resolution."""
+        """Build datasets list with coordinate transforms for each resolution.
+
+        Coordinate transformations include scale factors that account for:
+        1. Physical pixel sizes (from OME metadata)
+        2. Downsampling factors (ratio of resolution 0 to current resolution)
+
+        For example, if resolution 0 is 4096x4096 @ 0.5 um/pixel and
+        resolution 1 is 2048x2048, the downsampling factor is 2.0, so the
+        effective scale becomes 0.5 * 2.0 = 1.0 um/pixel.
+        """
         datasets: list[dict[str, Any]] = []
 
-        # Get physical pixel sizes
+        # Get physical pixel sizes from OME metadata (resolution 0)
         pps = physical_pixel_sizes(ome, series)
+
+        # Get reference dimensions from resolution 0
+        meta_0 = self._biofile.core_metadata(series, 0)
+        width_0 = meta_0.shape.x
+        height_0 = meta_0.shape.y
+        depth_0 = meta_0.shape.z
 
         for res in range(meta.resolution_count):
             # Dataset path
             dataset: dict[str, Any] = {"path": str(res)}
 
+            # Get dimensions for this resolution to calculate downsampling factor
+            meta_r = self._biofile.core_metadata(series, res)
+            width_r = meta_r.shape.x
+            height_r = meta_r.shape.y
+            depth_r = meta_r.shape.z
+
+            # Calculate downsampling factors (how much smaller this resolution is)
+            x_factor = width_0 / width_r if width_r > 0 else 1.0
+            y_factor = height_0 / height_r if height_r > 0 else 1.0
+            z_factor = depth_0 / depth_r if depth_r > 0 else 1.0
+
             # Build coordinate transforms (scale values)
-            # Include all dimensions to match array shape (5D or 6D for RGB)
-            scale = [
-                1.0,  # Time (no scaling)
-                1.0,  # Channel (no scaling)
-                pps.z if pps.z is not None else 1.0,  # Z spatial scale
-                pps.y if pps.y is not None else 1.0,  # Y spatial scale
-                pps.x if pps.x is not None else 1.0,  # X spatial scale
+            # Physical size * downsampling factor = effective pixel size
+            # Only include scales for dimensions that are present (use same filter)
+            dim_filter = _get_dimension_filter(meta_0)
+            all_scales = [
+                1.0,  # T
+                1.0,  # C
+                (pps.z * z_factor) if pps.z is not None else z_factor,  # Z
+                (pps.y * y_factor) if pps.y is not None else y_factor,  # Y
+                (pps.x * x_factor) if pps.x is not None else x_factor,  # X
             ]
-
-            # Add RGB/samples dimension if present
-            if meta.shape.rgb > 1:
-                scale.append(1.0)  # RGB samples (no scaling)
-
-            # TODO: For resolution > 0, scale factors should account for downsampling
-            # For now, we just use the same scale for all resolutions
-            # In the future, we should query the actual pixel sizes per resolution
+            scale = [
+                s for s, include in zip(all_scales, dim_filter, strict=False) if include
+            ]
 
             dataset["coordinateTransformations"] = [{"type": "scale", "scale": scale}]
             datasets.append(dataset)
 
         return datasets
 
-    def _get_array_store(self, series: int, resolution: int) -> BioFormatsStore:
-        """Get or create cached array store for a series/resolution."""
+    def _get_array_store(self, series: int, resolution: int) -> Store:
+        """Get or create cached array store for a series/resolution.
+
+        Uses integrated BioFormatsStore with RGB expansion and dimension
+        squeezing flags. Much simpler than wrapping!
+        """
         key = (series, resolution)
         if key not in self._array_stores:
             arr = self._biofile.as_array(series, resolution)
-            self._array_stores[key] = arr.zarr_store(tile_size=self._tile_size)
+            # Single store with integrated transformations
+            store = arr.zarr_store(
+                tile_size=self._tile_size,
+                expand_rgb=True,  # Always expand RGB into C
+                squeeze_singletons=True,  # Omit size-1 dims per NGFF
+            )
+            self._array_stores[key] = store
         return self._array_stores[key]
 
     # ------------------------------------------------------------------

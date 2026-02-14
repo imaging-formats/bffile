@@ -58,6 +58,8 @@ class BioFormatsStore(Store):
         *,
         tile_size: tuple[int, int] | None = None,
         memoize: int | bool = 0,
+        expand_rgb: bool = False,
+        squeeze_singletons: bool = False,
     ) -> None:
         super().__init__(read_only=True)
 
@@ -68,13 +70,54 @@ class BioFormatsStore(Store):
         self._lazy_array = obj
         self._meta = obj._meta
         self._tile_size = tile_size
+        self._expand_rgb = expand_rgb and self._meta.shape.rgb > 1
+        self._squeeze_singletons = squeeze_singletons
         self._metadata_bytes: bytes | None = None
         self._chunk_keys: set[str] | None = None
         self._is_open = True
 
+        # Pre-compute effective shape and dimension filter
+        self._effective_shape = self._compute_effective_shape()
+        self._dim_filter = self._compute_dimension_filter()
+
     @property
     def _biofile(self) -> BioFile:
         return self._lazy_array._biofile
+
+    def _compute_effective_shape(self) -> tuple[int, ...]:
+        """Compute effective shape with RGB expansion and dimension squeezing."""
+        shape = self._meta.shape
+        t, c, z, y, x = shape.t, shape.c, shape.z, shape.y, shape.x
+
+        # RGB expansion: multiply C by RGB samples
+        c_eff = c * shape.rgb if self._expand_rgb else c
+
+        full_shape = [t, c_eff, z, y, x]
+
+        # Dimension squeezing: omit singletons (except Y/X always kept)
+        if self._squeeze_singletons:
+            dim_filter = self._compute_dimension_filter()
+            return tuple(
+                s for s, keep in zip(full_shape, dim_filter, strict=False) if keep
+            )
+
+        return tuple(full_shape)
+
+    def _compute_dimension_filter(self) -> list[bool]:
+        """Return [T, C, Z, Y, X] mask indicating which dims to include."""
+        if not self._squeeze_singletons:
+            return [True, True, True, True, True]
+
+        shape = self._meta.shape
+        c_eff = shape.c * shape.rgb if self._expand_rgb else shape.c
+
+        return [
+            shape.t > 1,  # T
+            c_eff > 1,  # C (with RGB expanded)
+            shape.z > 1,  # Z
+            True,  # Y (always keep)
+            True,  # X (always keep)
+        ]
 
     # ------------------------------------------------------------------
     # Metadata & chunk key helpers
@@ -88,15 +131,20 @@ class BioFormatsStore(Store):
         meta = self._meta
         shape = meta.shape
 
-        array_shape = list(shape.as_array_shape)
+        # Use effective shape (RGB expanded, singletons squeezed)
+        array_shape = list(self._effective_shape)
 
+        # Build chunk shape to match effective shape
         if self._tile_size is not None:
             ty, tx = self._tile_size
-            chunks = [1, 1, 1, ty, tx]
+            base_chunks = [1, 1, 1, ty, tx]
         else:
-            chunks = [1, 1, 1, shape.y, shape.x]
-        if shape.rgb > 1:
-            chunks.append(shape.rgb)
+            base_chunks = [1, 1, 1, shape.y, shape.x]
+
+        # Apply dimension filter to get final chunk shape
+        chunks = [
+            c for c, keep in zip(base_chunks, self._dim_filter, strict=False) if keep
+        ]
 
         endian = "little" if meta.is_little_endian else "big"
 
@@ -123,7 +171,7 @@ class BioFormatsStore(Store):
         return self._metadata_bytes
 
     def _get_chunk_keys(self) -> set[str]:
-        """Build and cache the set of valid chunk keys."""
+        """Build and cache chunk keys for effective shape."""
         if self._chunk_keys is not None:
             return self._chunk_keys
 
@@ -137,29 +185,57 @@ class BioFormatsStore(Store):
             ny = 1
             nx = 1
 
+        # Generate keys for effective shape (RGB expanded, singletons squeezed)
         keys: set[str] = set()
-        rgb_suffix = "/0" if shape.rgb > 1 else ""
-        for t in range(shape.t):
-            for c in range(shape.c):
-                for z in range(shape.z):
-                    for yi in range(ny):
-                        for xi in range(nx):
-                            keys.add(f"c/{t}/{c}/{z}/{yi}/{xi}{rgb_suffix}")
+
+        # Build ranges for each dimension in full 5D space
+        t_range = range(shape.t)
+        c_eff = shape.c * shape.rgb if self._expand_rgb else shape.c
+        c_range = range(c_eff)
+        z_range = range(shape.z)
+        yi_range = range(ny)
+        xi_range = range(nx)
+
+        # Apply dimension filter to generate squeezed keys
+        ranges = [t_range, c_range, z_range, yi_range, xi_range]
+        active_ranges = [
+            r for r, keep in zip(ranges, self._dim_filter, strict=False) if keep
+        ]
+
+        import itertools
+
+        for indices in itertools.product(*active_ranges):
+            keys.add(f"c/{'/'.join(str(i) for i in indices)}")
 
         self._chunk_keys = keys
         return keys
 
+    def _parse_chunk_key(self, key: str) -> tuple[int, int, int, int, int]:
+        """Parse squeezed chunk key to full (t, c, z, yi, xi) coordinates."""
+        parts = key.split("/")
+        squeezed_indices = [int(p) for p in parts[1:]]  # Skip "c" prefix
+
+        # Map squeezed indices back to full 5D
+        full_indices = [0, 0, 0, 0, 0]  # [t, c, z, yi, xi]
+        kept_dims = [i for i, keep in enumerate(self._dim_filter) if keep]
+
+        for squeezed_i, dim_i in enumerate(kept_dims):
+            full_indices[dim_i] = squeezed_indices[squeezed_i]
+
+        return tuple(full_indices)
+
     def _read_chunk(self, key: str) -> bytes:
         """Read a chunk by its key and return raw bytes."""
-        parts = key.split("/")
-        # key format: "c/<t>/<c>/<z>/<yi>/<xi>" or "c/<t>/<c>/<z>/<yi>/<xi>/0"
-        t, c, z, yi, xi = (
-            int(parts[1]),
-            int(parts[2]),
-            int(parts[3]),
-            int(parts[4]),
-            int(parts[5]),
-        )
+        # Parse key (handles both squeezed and full formats)
+        t, c_eff, z, yi, xi = self._parse_chunk_key(key)
+
+        # Map effective C back to base (c, rgb_sample) if RGB is expanded
+        if self._expand_rgb:
+            c_base = c_eff // self._meta.shape.rgb
+            rgb_sample = c_eff % self._meta.shape.rgb
+        else:
+            c_base = c_eff
+            rgb_sample = None
 
         arr = self._lazy_array
         shape = self._meta.shape
@@ -176,7 +252,7 @@ class BioFormatsStore(Store):
 
         plane = self._biofile.read_plane(
             t=t,
-            c=c,
+            c=c_base,  # Use base channel index
             z=z,
             y=slice(y_start, y_stop),
             x=slice(x_start, x_stop),
@@ -184,16 +260,18 @@ class BioFormatsStore(Store):
             resolution=arr._resolution,
         )
 
+        # Extract single RGB channel if expanding RGB
+        if rgb_sample is not None:
+            plane = plane[..., rgb_sample]  # (Y, X, RGB) → (Y, X)
+
         # Pad edge chunks to full tile size (zarr expects full chunk shape)
         if self._tile_size is not None:
             ty, tx = self._tile_size
             actual_h = y_stop - y_start
             actual_w = x_stop - x_start
             if actual_h < ty or actual_w < tx:
-                if shape.rgb > 1:
-                    padded = np.zeros((ty, tx, shape.rgb), dtype=self._meta.dtype)
-                else:
-                    padded = np.zeros((ty, tx), dtype=self._meta.dtype)
+                # After RGB extraction, plane is always 2D (Y, X)
+                padded = np.zeros((ty, tx), dtype=self._meta.dtype)
                 padded[:actual_h, :actual_w] = plane
                 plane = padded
 

@@ -121,7 +121,11 @@ class LazyBioArray:
         return self.ndim == 6
 
     def zarr_store(
-        self, *, tile_size: tuple[int, int] | None = None
+        self,
+        *,
+        tile_size: tuple[int, int] | None = None,
+        expand_rgb: bool = False,
+        squeeze_singletons: bool = False,
     ) -> BioFormatsStore:
         """Create a read-only zarr v3 store backed by this array.
 
@@ -133,6 +137,12 @@ class LazyBioArray:
         tile_size : tuple[int, int], optional
             If provided, Y and X are chunked into tiles of this size.
             Default is full-plane chunks ``(1, 1, 1, Y, X)``.
+        expand_rgb : bool, optional
+            If True, expand RGB samples into separate C channels.
+            Default is False (preserves 6D arrays for RGB images).
+        squeeze_singletons : bool, optional
+            If True, omit dimensions with size 1 from metadata (except Y/X).
+            Default is False (always reports 5D arrays).
 
         Returns
         -------
@@ -141,7 +151,12 @@ class LazyBioArray:
         """
         from bffile._zarr_store import BioFormatsStore
 
-        return BioFormatsStore(self, tile_size=tile_size)
+        return BioFormatsStore(
+            self,
+            tile_size=tile_size,
+            expand_rgb=expand_rgb,
+            squeeze_singletons=squeeze_singletons,
+        )
 
     def __repr__(self) -> str:
         """String representation."""

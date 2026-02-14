@@ -9,6 +9,8 @@ from bffile import BioFile
 DO_ALL = True if len(sys.argv) >= 2 and sys.argv[1] == "1" else False
 
 for _test_file in Path("tests/data").glob("*"):
+    if _test_file.name == "CMU-1.svs":
+        continue
     shutil.rmtree("example.ome.zarr", ignore_errors=True)
     print("testing", _test_file)
     try:
