@@ -16,17 +16,17 @@ Some quick notes/tips for contributors:
 uv run pytest
 ```
 
-Note: By default, tests use an isolated [jgo](https://github.com/apposed/jgo)
-cache directory. This is slower (since it needs to download all maven endpoints
+Note: To use an isolated [jgo](https://github.com/apposed/jgo) cache directory,
+pass `--no-jgo-cache` to the test command. This will force jgo to resolve dependencies
+from scratch each time, without using any cached artifacts from `~/.jgo`.
+This is slower (since it needs to download all maven endpoints
 each time), but ensures that tests are not affected by any existing Java
 artifacts on your system. See [understanding the Java
 setup](#understanding-the-java-setup-and-dependency-management) below for more
 details.
 
-To run tests with the default jgo cache (which is faster), run:
-
 ```sh
-uv run pytest --allow-cache
+uv run pytest --no-jgo-cache
 ```
 
 ## Understanding the Java setup and dependency management

@@ -9,8 +9,17 @@ except PackageNotFoundError:  # pragma: no cover
 
 from ._biofile import BioFile
 from ._core_metadata import CoreMetadata, OMEShape
-from ._imread import imread
+from ._imread import imread, open_ome_zarr_group, open_zarr_array
 from ._lazy_array import LazyBioArray
 from ._series import Series
 
-__all__ = ["BioFile", "CoreMetadata", "LazyBioArray", "OMEShape", "Series", "imread"]
+__all__ = [
+    "BioFile",
+    "CoreMetadata",
+    "LazyBioArray",
+    "OMEShape",
+    "Series",
+    "imread",
+    "open_ome_zarr_group",
+    "open_zarr_array",
+]

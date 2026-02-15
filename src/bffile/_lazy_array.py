@@ -9,6 +9,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from bffile._biofile import BioFile
+    from bffile._zarr import BFArrayStore
 
 
 class LazyBioArray:
@@ -83,7 +84,7 @@ class LazyBioArray:
 
         # Get metadata directly from the 2D list (stateless!)
         # This avoids hidden dependency on biofile's current state
-        meta = biofile.core_metadata(series, resolution)
+        self._meta = meta = biofile.core_metadata(series, resolution)
 
         # Follow same logic as to_numpy(): only include RGB dimension if > 1
         self._shape = meta.shape.as_array_shape
@@ -118,6 +119,47 @@ class LazyBioArray:
     def is_rgb(self) -> bool:
         """True if image has RGB/RGBA components (ndim == 6)."""
         return self.ndim == 6
+
+    def zarr_store(
+        self,
+        *,
+        tile_size: tuple[int, int] | None = None,
+        rgb_as_channels: bool = False,
+        squeeze_singletons: bool = False,
+    ) -> BFArrayStore:
+        """Create a read-only zarr v3 store backed by this array.
+
+        Each zarr chunk maps to a single ``read_plane()`` call. Requires
+        the ``zarr`` extra (``pip install bffile[zarr]``).
+
+        Parameters
+        ----------
+        tile_size : tuple[int, int], optional
+            If provided, Y and X are chunked into tiles of this size.
+            Default is full-plane chunks ``(1, 1, 1, Y, X)``.
+        rgb_as_channels : bool, optional
+            If True, interleave RGB samples as separate C channels (OME-Zarr
+            convention). If False, keep RGB as the last dimension (numpy/imread
+            convention). Default is False.
+        squeeze_singletons : bool, optional
+            If True, omit dimensions with size 1 from metadata (except Y/X).
+            Default is False (always reports 5D or 6D arrays).
+
+        Returns
+        -------
+        BioFormatsStore
+            A zarr v3 Store suitable for ``zarr.open(store, mode="r")``.
+        """
+        from bffile._zarr import BFArrayStore
+
+        return BFArrayStore(
+            self._biofile,
+            self._series,
+            self._resolution,
+            tile_size=tile_size,
+            rgb_as_channels=rgb_as_channels,
+            squeeze_singletons=squeeze_singletons,
+        )
 
     def __repr__(self) -> str:
         """String representation."""

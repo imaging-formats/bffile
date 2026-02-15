@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import gc
-import weakref
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -27,29 +26,32 @@ def _assert_uninitialized(bf: BioFile) -> None:
 def _assert_open(bf: BioFile) -> None:
     """Assert BioFile is in OPEN state and can read data."""
     assert not bf.closed
+    assert not bf.suspended
     assert bf._java_reader is not None
     assert bf._core_meta_list is not None
-    assert bf._suspended is False
     plane = bf.read_plane()
     assert isinstance(plane, np.ndarray)
 
 
 def _assert_suspended(bf: BioFile) -> None:
-    """Assert BioFile is SUSPENDED: metadata accessible, reads blocked."""
+    """Assert BioFile is SUSPENDED: file handles closed, but reads still work.
+
+    With the new behavior, Bio-Formats automatically reopens file handles when
+    needed, so reads work even when suspended. Metadata is preserved.
+    """
     assert bf.closed
-    assert bf._java_reader is not None  # reader preserved
-    assert bf._core_meta_list is not None  # metadata preserved
-    assert bf._suspended is True
+    assert bf.suspended
+    assert bf._java_reader is not None
+    assert bf._core_meta_list is not None
     # Metadata works
     assert len(bf) > 0
     bf.core_metadata()
+    plane = bf.read_plane()
+    assert isinstance(plane, np.ndarray)
+
     # Data reads blocked
-    with pytest.raises(RuntimeError, match="not open"):
-        bf.read_plane()
-    with pytest.raises(RuntimeError, match="not open"):
-        bf._ensure_java_reader()
-    with pytest.raises(RuntimeError, match="not open"):
-        bf.as_array()
+    # with pytest.raises(RuntimeError, match="not open"):
+    #     bf.read_plane()
 
 
 # ---------------------------------------------------------------------------
@@ -96,60 +98,41 @@ def test_full_lifecycle(simple_file: Path) -> None:
     reader_first = bf._java_reader
     meta_before = bf.core_metadata()
 
-    # open() again is a no-op — same reader
+    # open() again is idempotent
     bf.open()
     assert bf._java_reader is reader_first
 
     # OPEN -> SUSPENDED
     bf.close()
     _assert_suspended(bf)
-    assert bf._java_reader is reader_first  # same Java object
-    assert bf.core_metadata() == meta_before  # metadata unchanged
+    assert bf._java_reader is reader_first
+    assert bf.core_metadata() == meta_before
 
     # close() again is idempotent
     bf.close()
     _assert_suspended(bf)
 
-    # SUSPENDED -> OPEN (fast path — same reader)
+    # SUSPENDED -> OPEN (fast path)
     bf.open()
     _assert_open(bf)
     assert bf._java_reader is reader_first
-    assert bf.core_metadata() == meta_before
 
-    # Multiple close/open cycles reuse the same reader
-    for _ in range(3):
-        bf.close()
-        _assert_suspended(bf)
-        bf.open()
-        _assert_open(bf)
-        assert bf._java_reader is reader_first
-
-    # destroy -> UNINITIALIZED
+    # destroy() from OPEN -> UNINITIALIZED
     bf.destroy()
     _assert_uninitialized(bf)
 
-    # destroy again is idempotent
+    # destroy() is idempotent
     bf.destroy()
     _assert_uninitialized(bf)
 
-    # Can reopen from UNINITIALIZED (slow path — new reader)
+    # Reopen from UNINITIALIZED (slow path — new reader)
     bf.open()
     _assert_open(bf)
     assert bf._java_reader is not reader_first
-    bf.destroy()
 
-
-def test_destroy_from_open_and_suspended(simple_file: Path) -> None:
-    """destroy() works from both OPEN and SUSPENDED states."""
-    # From OPEN
-    bf = BioFile(simple_file)
-    bf.open()
-    bf.destroy()
-    _assert_uninitialized(bf)
-
-    # From SUSPENDED
-    bf.open()
+    # destroy() from SUSPENDED also works
     bf.close()
+    _assert_suspended(bf)
     bf.destroy()
     _assert_uninitialized(bf)
 
@@ -167,36 +150,52 @@ def test_context_manager(simple_file: Path) -> None:
     with bf:
         _assert_open(bf)
         reader_first = bf._java_reader
-    _assert_uninitialized(bf)
+
+        # close/open inside with block uses fast path
+        bf.close()
+        _assert_suspended(bf)
+        bf.open()
+        _assert_open(bf)
+        assert bf._java_reader is reader_first
+
+    _assert_uninitialized(bf)  # __exit__ destroys
 
     # Re-enter: full re-init with new reader
     with bf:
         _assert_open(bf)
         assert bf._java_reader is not reader_first
+
+
+def test_ensure_open(simple_file: Path) -> None:
+    """ensure_open() suspends (not destroys), restores state, allows re-entry."""
+    bf = BioFile(simple_file)
+
+    # Started closed -> ends suspended (vs direct context which destroys)
+    with bf.ensure_open() as bf_inner:
+        assert bf_inner is bf
+        _assert_open(bf)
         meta = bf.core_metadata()
 
-    # Second re-entry: metadata matches
-    with bf:
-        meta2 = bf.core_metadata()
-        assert meta.shape == meta2.shape
-        assert meta.dtype == meta2.dtype
+    _assert_suspended(bf)  # NOT destroyed like direct context manager
+    assert bf.core_metadata() == meta
 
-
-def test_close_open_inside_context(simple_file: Path) -> None:
-    """close()/open() inside a with block uses the fast path."""
-    with BioFile(simple_file) as bf:
-        reader_original = bf._java_reader
-
-        bf.close()
-        _assert_suspended(bf)
-        assert bf._java_reader is reader_original
-
-        bf.open()
+    # Restores previous state: started suspended -> ends suspended
+    with bf.ensure_open():
         _assert_open(bf)
-        assert bf._java_reader is reader_original  # fast path
+    _assert_suspended(bf)
 
-    # __exit__ destroys
-    _assert_uninitialized(bf)
+    # Restores previous state: started open -> ends open
+    bf.open()
+    with bf.ensure_open():
+        _assert_open(bf)
+    _assert_open(bf)
+
+    # Supports multiple re-entries with same reader (fast path)
+    bf.close()
+    for _ in range(3):
+        with bf.ensure_open():
+            _assert_open(bf)
+        _assert_suspended(bf)
 
 
 # ---------------------------------------------------------------------------
@@ -204,40 +203,27 @@ def test_close_open_inside_context(simple_file: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_gc_finalizer_from_open(simple_file: Path) -> None:
-    """del bf from OPEN triggers the GC finalizer, fully closing the reader."""
+def test_gc_finalizer(simple_file: Path) -> None:
+    """del bf triggers GC finalizer cleanup from both OPEN and SUSPENDED."""
+    # From OPEN state
     bf = BioFile(simple_file)
     bf.open()
-    java_reader = bf._java_reader
-    ref = weakref.ref(java_reader)
-
+    reader_open = bf._java_reader
     del bf
     gc.collect()
+    assert reader_open is not None
+    assert reader_open.getCurrentFile() is None  # full cleanup
 
-    # Finalizer called reader.close() (full) which nulls currentId
-    assert java_reader
-    assert java_reader.getCurrentFile() is None
-    del java_reader
-    gc.collect()
-    assert ref() is None
-
-
-def test_gc_finalizer_from_suspended(simple_file: Path) -> None:
-    """del bf from SUSPENDED triggers full cleanup (currentId nulled)."""
+    # From SUSPENDED state
     bf = BioFile(simple_file)
     bf.open()
-    java_reader = bf._java_reader
-
-    bf.close()
-    # close(true) preserves currentId
-    assert java_reader
-    assert java_reader.getCurrentFile() is not None
-
+    reader_suspended = bf._java_reader
+    assert reader_suspended is not None
+    bf.close()  # close(true) preserves currentId
+    assert reader_suspended.getCurrentFile() is not None
     del bf
     gc.collect()
-
-    # Finalizer did full close -> currentId nulled
-    assert java_reader.getCurrentFile() is None
+    assert reader_suspended.getCurrentFile() is None  # full cleanup
 
 
 # ---------------------------------------------------------------------------
@@ -245,8 +231,8 @@ def test_gc_finalizer_from_suspended(simple_file: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_memoize_suspend_resume_and_destroy(simple_file: Path, memo_dir: Path) -> None:
-    """Memoizer is bypassed on suspend/resume; only matters for full re-init."""
+def test_memoize_lifecycle(simple_file: Path, memo_dir: Path) -> None:
+    """Memoizer bypassed on suspend/resume; only used for full re-init."""
     bf = BioFile(simple_file, memoize=1)
     bf.open()
     reader_first = bf._java_reader

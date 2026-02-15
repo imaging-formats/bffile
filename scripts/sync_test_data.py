@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from subprocess import check_output
 
-import boto3
+import boto3  # pyright: ignore[reportMissingImports]
 
 BUCKET = "bioformats-test-data"
 ENDPOINT = "https://09ca0424cb878b7f78db1f0c9f9031a4.r2.cloudflarestorage.com"

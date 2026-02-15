@@ -34,8 +34,8 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=2.1.0",
-    "ome-types[pint,lxml]>=0.6.2",
-    "scyjava>=1.12.2",
+    "ome-types[pint,lxml]>=0.6.3",
+    "scyjava>=1.12.2"
 ]
 
 [project.urls]
@@ -44,13 +44,15 @@ repository = "https://github.com/imaging-formats/bffile"
 
 [project.optional-dependencies]
 dask = ["dask[array]>=2024.11.0"]
+zarr = ["zarr>=3.1.0; python_version>='3.11'"]
 
 [dependency-groups]
 test = [
-    "bffile[dask]",
+    "bffile[dask,zarr]",
     "pytest>=8.3.5",
     "pytest-cov>=6.1.1",
     "requests>=2.32.3",
+    "yaozarrs[io]>=0.2.2",
 ]
 dev = [
     { include-group = "test" },
@@ -63,6 +65,7 @@ dev = [
     "rich>=14.0.0",
     "ruff>=0.11.6",
     "types-requests>=2.32.0.20250328",
+    "yaozarrs[io]>=0.2.2",
 ]
 docs = [
     "griffe-fieldz>=0.4.0",

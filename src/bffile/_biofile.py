@@ -5,7 +5,7 @@ import sys
 import warnings
 import weakref
 from collections.abc import Mapping, Sequence
-from contextlib import suppress
+from contextlib import AbstractContextManager, suppress
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -25,6 +25,7 @@ from ._jimports import jimport
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from types import TracebackType
 
     import dask.array
     import java.lang
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from bffile._lazy_array import LazyBioArray
+    from bffile._zarr import BFOmeZarrStore
 
 
 @dataclass(frozen=True)
@@ -165,12 +167,13 @@ class BioFile(Sequence[Series]):
         self._java_reader: IFormatReader | None = None
         # 2D structure: list[series][resolution]
         self._core_meta_list: list[list[CoreMetadata]] | None = None
+        self._cached_ome_meta: OME | None = None
         self._finalizer: weakref.finalize | None = None
         self._suspended: bool = False
 
     def _ensure_java_reader(self) -> IFormatReader:
         """Return the native reader, raising if not open."""
-        if self._java_reader is None or self._suspended:
+        if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
         return self._java_reader
 
@@ -268,13 +271,25 @@ class BioFile(Sequence[Series]):
 
         Safe to call multiple times — no-op if already open.
 
-        !!! tip "Returns self"
-            This method returns `self`, so you can chain it directly after the
-            constructor if you prefer that style:
+        Returns
+        -------
+        Self
+            Returns `self` for method chaining.
 
-            ```python
-            bf = BioFile(path).open()
-            ```
+        Examples
+        --------
+        ```python
+        # Method chaining
+        bf = BioFile(path).open()
+
+        # Or two lines
+        bf = BioFile(path)
+        bf.open()
+        ```
+
+        See Also
+        --------
+        ensure_open : Context manager that restores previous state on exit
         """
         with self._lock:
             if self._java_reader is not None and not self._suspended:
@@ -324,6 +339,40 @@ class BioFile(Sequence[Series]):
             self._core_meta_list = core_meta
             self._finalizer = weakref.finalize(self, _close_java_reader, r)
         return self
+
+    def ensure_open(self) -> _EnsureOpenContext:
+        """Context manager that temporarily opens the file if closed.
+
+        Opens the file if needed, then on exit: suspends if it started closed
+        (uninitialized or suspended), or leaves open if it started open. This
+        allows temporary access without disrupting the caller's file state.
+
+        Note: "closed" encompasses both uninitialized and suspended states.
+        Files starting uninitialized will end suspended (not destroyed).
+
+        Returns
+        -------
+        _EnsureOpenContext
+            Context manager that restores open/closed state on exit.
+
+        Examples
+        --------
+        ```python
+        bf = BioFile(path)
+
+        # Started uninitialized -> ends suspended
+        with bf.ensure_open():
+            data = bf.read_plane()
+        assert bf.suspended  # not destroyed
+
+        # Started open -> stays open
+        bf.open()
+        with bf.ensure_open():
+            data = bf.read_plane()
+        assert not bf.closed
+        ```
+        """
+        return _EnsureOpenContext(self, close_on_exit=self.closed)
 
     def close(self) -> None:
         """Close file handles while preserving reader state for fast reopen.
@@ -409,12 +458,75 @@ class BioFile(Sequence[Series]):
 
         Planes >2GB automatically use tiled reading (transparent, ~20% slower).
         """
-        if self.closed:
-            raise RuntimeError("File not open - call open() first")
-
         from bffile._lazy_array import LazyBioArray
 
         return LazyBioArray(self, series, resolution)
+
+    def as_zarr_group(
+        self,
+        *,
+        tile_size: tuple[int, int] | None = None,
+    ) -> BFOmeZarrStore:
+        """Return a zarr v3 group store containing all series and resolutions.
+
+        Creates an OME-ZARR group structure following NGFF v0.5 specification,
+        with full hierarchy including all series and resolution levels. Useful
+        for tools like napari that expect complete OME-ZARR groups.
+
+        Directory structure::
+
+            root/
+            ├── zarr.json (group metadata)
+            ├── OME/
+            │   ├── zarr.json (series list)
+            │   └── METADATA.ome.xml (raw OME-XML)
+            ├── 0/ (series 0 - multiscales group)
+            │   ├── zarr.json (multiscales metadata with axes/datasets)
+            │   ├── 0/ (full resolution)
+            │   │   ├── zarr.json (array metadata)
+            │   │   └── c/... (chunk data)
+            │   └── 1/ (downsampled, if exists)
+            └── 1/ (series 1, if exists)
+
+        Parameters
+        ----------
+        tile_size : tuple[int, int], optional
+            If provided, Y and X are chunked into tiles of this size instead of
+            full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``.
+
+        Returns
+        -------
+        BFOmeZarrStore
+            Read-only zarr v3 Store containing the full file hierarchy.
+
+        Examples
+        --------
+        Open as zarr group and access arrays:
+
+        >>> import zarr
+        >>> with BioFile("image.nd2") as bf:
+        ...     group = zarr.open_group(bf.as_zarr_group(), mode="r")
+        ...     # Access first series, full resolution
+        ...     arr = group["0/0"]
+        ...     data = arr[0, 0, 0]
+        ...
+        ...     # Check multiscales metadata
+        ...     print(group["0"].attrs["ome"]["multiscales"])
+        ...
+        ...     # Save to disk
+        ...     bf.as_zarr_group().save("output.ome.zarr")
+
+        Notes
+        -----
+        - BioFile must remain open while using the store
+        - For single array access, prefer `as_array().zarr_store()` (simpler)
+        - This creates the full hierarchy needed for multi-series/multi-resolution
+          visualization tools
+        - Conforms to NGFF v0.5 specification
+        """
+        from bffile._zarr._group_store import BFOmeZarrStore
+
+        return BFOmeZarrStore(self, tile_size=tile_size)
 
     def to_dask(
         self,
@@ -518,8 +630,19 @@ class BioFile(Sequence[Series]):
 
     @property
     def closed(self) -> bool:
-        """Whether the underlying file handles are currently closed."""
+        """Return True if the file is currently closed (uninitialized or suspended)."""
         return self._java_reader is None or self._suspended
+
+    @property
+    def suspended(self) -> bool:
+        """Return True if the file is currently suspended (closed but not destroyed).
+
+        "Suspended" means:
+        - we have previously opened the file and parsed the metadata
+        - we retain the initialized Java reader and its state in the JVM
+        - but we have released the file handles to free up system resources
+        """
+        return self._java_reader is not None and self._suspended
 
     @property
     def filename(self) -> str:
@@ -546,10 +669,13 @@ class BioFile(Sequence[Series]):
     @property
     def ome_metadata(self) -> OME:
         """Return [`ome_types.OME`][] object parsed from OME XML."""
-        if not (omx_xml := self.ome_xml):  # pragma: no cover (not sure if possible)
-            return OME()
-        xml = _utils.clean_ome_xml_for_known_issues(omx_xml)
-        return OME.from_xml(xml)
+        if self._cached_ome_meta is None:
+            if not (omx_xml := self.ome_xml):  # pragma: no cover (not sure if possible)
+                self._cached_ome_meta = OME()
+            else:
+                xml = _utils.clean_ome_xml_for_known_issues(omx_xml)
+                self._cached_ome_meta = OME.from_xml(xml)
+        return self._cached_ome_meta
 
     def __enter__(self) -> Self:
         """Enter context manager - ensures file is open."""
@@ -1009,3 +1135,31 @@ def _close_java_reader(java_reader: IFormatReader | None) -> None:
         return  # pragma: no cover
     with suppress(Exception):
         java_reader.close()
+
+
+class _EnsureOpenContext(AbstractContextManager[BioFile]):
+    """A context manager that ensures BioFile is open and restores state on exit.
+
+    Unlike BioFile.__enter__/__exit__ which destroys on exit, this context manager
+    ensures the file is open for the duration of the block, then restores it to
+    whatever state it was in before (open or closed).
+    """
+
+    def __init__(self, biofile: BioFile, close_on_exit: bool) -> None:
+        self.biofile = biofile
+        self.close_on_exit = close_on_exit
+
+    def __enter__(self) -> BioFile:
+        if self.biofile.closed:
+            self.biofile.open()
+        return self.biofile
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+        /,
+    ) -> Any:
+        if self.close_on_exit:
+            self.biofile.close()
