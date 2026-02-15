@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+import numpy as np
+
 from ._biofile import BioFile
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    import numpy as np
     import zarr
 
 
@@ -51,7 +52,7 @@ def imread(path: str | Path, *, series: int = 0, resolution: int = 0) -> np.ndar
     """
     with BioFile(path) as bf:
         arr = bf.as_array(series=series, resolution=resolution)
-        return arr[:]
+        return np.asarray(arr)
 
 
 def open_zarr_array(

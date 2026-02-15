@@ -47,8 +47,8 @@ def pyramid_file() -> Path:
 
 @pytest.fixture
 def rgb_file() -> Path:
-    """RGB ND2 file for RGB dimension testing."""
-    return TEST_DATA / "ND2_dims_rgb.nd2"
+    """RGB file for testing."""
+    return TEST_DATA / "RGB-8bit.czi"
 
 
 @pytest.fixture(

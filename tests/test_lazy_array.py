@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pytest
 
-from bffile import BioFile
+from bffile import BioFile, LazyBioArray
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -194,7 +194,7 @@ def test_lazy_vs_numpy_single_plane(opened_biofile: BioFile) -> None:
     numpy_data = np.asarray(arr)
 
     # Test single plane
-    lazy_plane = arr[0, 0, 0]
+    lazy_plane = np.asarray(arr[0, 0, 0])
     numpy_plane = numpy_data[0, 0, 0]
 
     assert np.array_equal(lazy_plane, numpy_plane)
@@ -222,7 +222,7 @@ def test_lazy_vs_numpy_subregion(opened_biofile: BioFile) -> None:
     y_slice = slice(y_mid - 5, y_mid + 5)
     x_slice = slice(x_mid - 5, x_mid + 5)
 
-    lazy_roi = arr[0, 0, 0, y_slice, x_slice]
+    lazy_roi = np.asarray(arr[0, 0, 0, y_slice, x_slice])
     numpy_roi = numpy_data[0, 0, 0, y_slice, x_slice]
 
     assert np.array_equal(lazy_roi, numpy_roi)
@@ -238,9 +238,9 @@ def test_multi_series_independence(multiseries_file) -> None:
         arr0 = bf.as_array(series=0)
         arr1 = bf.as_array(series=1)
 
-        lazy_s0_first = arr0[0, 0, 0]
-        lazy_s1 = arr1[0, 0, 0]
-        lazy_s0_second = arr0[0, 0, 0]
+        lazy_s0_first = np.asarray(arr0[0, 0, 0])
+        lazy_s1 = np.asarray(arr1[0, 0, 0])
+        lazy_s0_second = np.asarray(arr0[0, 0, 0])
 
         assert np.array_equal(lazy_s0_first, truth_s0[0, 0, 0])
         assert np.array_equal(lazy_s1, truth_s1[0, 0, 0])
@@ -299,3 +299,83 @@ def test_tiled_read_subregion(simple_file: Path) -> None:
             reader, meta, 0, 0, 0, y_start, x_start, height, width
         )
         np.testing.assert_array_equal(direct, tiled)
+
+
+@pytest.mark.parametrize(
+    ("ops", "direct", "min_t", "min_c", "min_z"),
+    [
+        # Composition: each operation applies to first effective dimension
+        ((slice(0, 10), slice(2, 4)), np.s_[2:4], 10, 1, 1),  # ar[0:10][2:4] == [2:4]
+        ((slice(0, 5), -1), np.s_[4], 5, 1, 1),  # arr[0:5][-1] == arr[4]
+        ((0, slice(0, 2)), np.s_[0, 0:2], 1, 2, 1),  # arr[0][0:2] == arr[0, 0:2]
+        ((1, 0, 1), np.s_[1, 0, 1], 2, 1, 2),  # arr[1][0][1] == arr[1, 0, 1]
+        ((slice(0, 2), 1), np.s_[1], 2, 1, 1),  # arr[0:2][1] == arr[1]
+    ],
+)
+def test_lazy_view_compositions(
+    opened_biofile: BioFile,
+    ops: tuple[slice | int, ...],
+    direct: tuple[slice | int, ...] | slice | int,
+    min_t: int,
+    min_c: int,
+    min_z: int,
+) -> None:
+    """Composed lazy indexing matches direct indexing for common patterns."""
+    arr = opened_biofile.as_array()
+    meta = opened_biofile.core_metadata()
+
+    if arr.nbytes > 100_000_000:
+        pytest.skip("Array too large")
+
+    if meta.shape.t < min_t or meta.shape.c < min_c or meta.shape.z < min_z:
+        pytest.skip("Array does not satisfy composition requirements")
+
+    view = arr
+    for index in ops:
+        view = view[index]
+        if isinstance(view, LazyBioArray):
+            assert view.ndim <= arr.ndim
+
+    composed = np.asarray(view)
+    expected = np.asarray(arr[direct])
+    np.testing.assert_array_equal(composed, expected)
+
+
+def test_rgb_index_composition_uses_parent_bounds(rgb_file: Path) -> None:
+    """Nested RGB indexing should compose with the parent RGB slice."""
+    with BioFile(rgb_file) as bf:
+        arr = bf.as_array()
+        meta = bf.core_metadata()
+
+        assert arr.ndim == 6
+        assert arr.is_rgb and meta.shape.rgb >= 3
+
+        plane = arr[0, 0, 0]
+        assert plane.ndim == 3
+        composed = plane[..., 1:3][..., 0]
+        assert composed.ndim == 2
+
+        assert isinstance(composed, LazyBioArray)
+        assert composed._rgb_index == 1
+
+        materialized = np.asarray(composed)
+        expected = np.asarray(arr[0, 0, 0, :, :, 1])
+        np.testing.assert_array_equal(materialized, expected)
+
+
+def test_dimension_squeezing_composition(opened_biofile: BioFile) -> None:
+    """Successive integer indexing squeezes dimensions as expected."""
+    arr = opened_biofile.as_array()
+
+    view = arr[0]
+    assert isinstance(view, LazyBioArray)
+    assert view.ndim == arr.ndim - 1
+
+    view = view[0]
+    assert isinstance(view, LazyBioArray)
+    assert view.ndim == arr.ndim - 2
+
+    view = view[0]
+    assert isinstance(view, LazyBioArray)
+    expected_ndim = 3 if arr.is_rgb else 2
+    assert view.ndim == expected_ndim
