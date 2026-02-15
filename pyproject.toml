@@ -34,8 +34,8 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=2.1.0",
-    "ome-types[pint,lxml]>=0.6.2",
-    "scyjava>=1.12.2",
+    "ome-types[pint,lxml]>=0.6.3",
+    "scyjava>=1.12.2"
 ]
 
 [project.urls]
