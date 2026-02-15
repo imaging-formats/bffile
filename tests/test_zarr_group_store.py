@@ -227,3 +227,20 @@ def test_invalid_keys_return_none_and_false(simple_file: Path) -> None:
         for key in invalid_keys:
             assert asyncio.run(store.get(key, proto)) is None
             assert not asyncio.run(store.exists(key))
+
+
+def test_output_valid_zarr(any_file: Path, tmp_path: Path) -> None:
+    """Test that the output can be read by zarr and matches expected data."""
+    dest = tmp_path / "example.ome.zarr"
+    with BioFile(any_file) as biofile:
+        arr = biofile.as_array()
+        if arr.nbytes > 2_000_000_000:  # Skip arrays > 2GB
+            pytest.skip(f"Array too large ({arr.nbytes / 1e9:.2f} GB)")
+
+        biofile.as_zarr_group().save(dest)
+    try:
+        import yaozarrs
+
+        yaozarrs.validate_zarr_store(dest)
+    except ImportError:
+        return

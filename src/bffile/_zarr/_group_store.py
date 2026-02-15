@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from enum import Enum, auto
 from itertools import compress
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import zarr
 from ome_types.model import UnitsLength, UnitsTime
@@ -322,7 +322,7 @@ class BFOmeZarrStore(ReadOnlyStore):
     # ------------------------------------------------------------------
 
     def __eq__(self, value: object) -> bool:
-        if not isinstance(value, type(self)):
+        if not isinstance(value, type(self)):  # pragma: no cover
             return NotImplemented
         return (
             self._biofile.filename == value._biofile.filename
@@ -352,33 +352,33 @@ class BFOmeZarrStore(ReadOnlyStore):
                 return None
             data = self._build_multiscales_metadata(series)
         elif parsed.level == PathLevel.ARRAY_METADATA:
-            series = parsed.series
-            resolution = parsed.resolution
-            if series is None or resolution is None:
-                return None
-            if not (0 <= series < len(self._biofile)):
-                return None
-            meta = self._biofile[series].core_metadata()
+            if (
+                (series := parsed.series) is None
+                or (resolution := parsed.resolution) is None
+                or not (0 <= series < len(self._biofile))
+            ):
+                return None  # pragma: no cover
+            meta = self._biofile.core_metadata(series=series)
             if not (0 <= resolution < meta.resolution_count):
-                return None
+                return None  # pragma: no cover
             store = self._get_array_store(series, resolution)
             return await store.get("zarr.json", prototype, byte_range)
         elif parsed.level == PathLevel.CHUNK:
-            series = parsed.series
-            resolution = parsed.resolution
-            chunk_key = parsed.chunk_key
-            if series is None or resolution is None or chunk_key is None:
-                return None
-            if not (0 <= series < len(self._biofile)):
-                return None
-            meta = self._biofile[series].core_metadata()
+            if (
+                (series := parsed.series) is None
+                or (resolution := parsed.resolution) is None
+                or (chunk_key := parsed.chunk_key) is None
+                or not (0 <= series < len(self._biofile))
+            ):
+                return None  # pragma: no cover
+            meta = self._biofile.core_metadata(series=series)
             if not (0 <= resolution < meta.resolution_count):
-                return None
+                return None  # pragma: no cover
             store = self._get_array_store(series, resolution)
             with self._biofile.ensure_open():
                 return await store.get(chunk_key, prototype, byte_range)
         else:
-            return None
+            return None  # pragma: no cover
 
         # Apply byte range if requested
         if byte_range is not None:
@@ -391,7 +391,7 @@ class BFOmeZarrStore(ReadOnlyStore):
         try:
             if (parsed := ParsedPath.from_key(key)) is None:
                 return False
-        except ValueError:
+        except ValueError:  # pragma: no cover
             return False
 
         # Root, OME group, and OME metadata always exist
@@ -403,25 +403,27 @@ class BFOmeZarrStore(ReadOnlyStore):
             return True
 
         # Multiscales group (series group): check series index is valid
+        series = cast("int", parsed.series)
         if parsed.level == PathLevel.MULTISCALES_GROUP:
-            return 0 <= parsed.series < len(self._biofile)  # type: ignore[operator]
+            return 0 <= series < len(self._biofile)
 
         # Array metadata: check series and resolution are valid
+        resolution = cast("int", parsed.resolution)
         if parsed.level == PathLevel.ARRAY_METADATA:
-            if not (0 <= parsed.series < len(self._biofile)):  # type: ignore[operator]
+            if not (0 <= series < len(self._biofile)):
                 return False
-            meta = self._biofile[parsed.series].core_metadata()  # type: ignore[index]
-            return 0 <= parsed.resolution < meta.resolution_count  # type: ignore[operator]
+            meta = self._biofile.core_metadata(series=series)
+            return 0 <= resolution < meta.resolution_count
 
         # Chunk: delegate to array store
         if parsed.level == PathLevel.CHUNK:
-            if not (0 <= parsed.series < len(self._biofile)):  # type: ignore[operator]
+            if not (0 <= series < len(self._biofile)):
                 return False
-            meta = self._biofile[parsed.series].core_metadata()  # type: ignore[index]
-            if not (0 <= parsed.resolution < meta.resolution_count):  # type: ignore[operator]
+            meta = self._biofile.core_metadata(series=series)
+            if not (0 <= resolution < meta.resolution_count):
                 return False
-            store = self._get_array_store(parsed.series, parsed.resolution)  # type: ignore[arg-type]
-            return await store.exists(parsed.chunk_key)  # type: ignore[arg-type]
+            store = self._get_array_store(series, resolution)
+            return await store.exists(parsed.chunk_key)  # type: ignore
 
         return False
 
@@ -434,20 +436,12 @@ class BFOmeZarrStore(ReadOnlyStore):
         yield "OME/zarr.json"
         yield "OME/METADATA.ome.xml"
 
-        # Enumerate all series
+        # Enumerate all series and resolution levels
         for series_idx in range(len(self._biofile)):
-            # Series/multiscales group (NGFF v0.5: series IS multiscales)
             yield f"{series_idx}/zarr.json"
-
-            # Get metadata for this series
-            meta = self._biofile[series_idx].core_metadata()
-
-            # Enumerate all resolutions
+            meta = self._biofile.core_metadata(series=series_idx)
             for res_idx in range(meta.resolution_count):
-                # Array metadata
                 yield f"{series_idx}/{res_idx}/zarr.json"
-
-                # Chunks - delegate to array store
                 store = self._get_array_store(series_idx, res_idx)
                 async for chunk_key in store.list():
                     if chunk_key != "zarr.json":
@@ -510,13 +504,6 @@ class ParsedPath(NamedTuple):
     resolution: int | None = None
     chunk_key: str | None = None
 
-    @staticmethod
-    def _to_int(value: str) -> int | None:
-        try:
-            return int(value)
-        except ValueError:
-            return None
-
     @classmethod
     def from_key(cls, key: str) -> ParsedPath | None:
         """Parse a zarr key and return structured path information.
@@ -537,21 +524,28 @@ class ParsedPath(NamedTuple):
             case ["OME", "METADATA.ome.xml"]:
                 return cls(PathLevel.OME_METADATA)
             case [series, "zarr.json"]:
-                if (series_i := cls._to_int(series)) is None:
+                if (series_i := _to_int(series)) is None:
                     return None
                 return cls(PathLevel.MULTISCALES_GROUP, series_i)
             case [series, resolution, "zarr.json"]:
-                series_i = cls._to_int(series)
-                resolution_i = cls._to_int(resolution)
+                series_i = _to_int(series)
+                resolution_i = _to_int(resolution)
                 if series_i is None or resolution_i is None:
                     return None
                 return cls(PathLevel.ARRAY_METADATA, series_i, resolution_i)
             case [series, resolution, "c", *rest]:
-                series_i = cls._to_int(series)
-                resolution_i = cls._to_int(resolution)
+                series_i = _to_int(series)
+                resolution_i = _to_int(resolution)
                 if series_i is None or resolution_i is None:
                     return None
                 chunk_key = "/".join(["c", *rest])
                 return cls(PathLevel.CHUNK, series_i, resolution_i, chunk_key)
             case _:
                 return None
+
+
+def _to_int(value: str) -> int | None:
+    try:
+        return int(value)
+    except ValueError:
+        return None
