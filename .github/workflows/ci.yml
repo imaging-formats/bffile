@@ -28,7 +28,6 @@ jobs:
         java${{ matrix.java-version }}
         ${{ matrix.bioformats-version && format('bf{0}', matrix.bioformats-version) || '' }}
         ${{ matrix.resolution != 'highest' && matrix.resolution || '' }}
-        ${{ matrix.group != 'test-all' && 'no-arrays' || '' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
