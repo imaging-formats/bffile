@@ -66,18 +66,22 @@ def main() -> None:
         "(not recommended for large files)",
     )
     parser.add_argument(
-        "--no_async",
+        "--no-async",
         action="store_true",
         help="Disable asynchronous loading",
+    )
+    parser.add_argument(
+        "--no-split-channels",
+        action="store_true",
+        help="Disable channel splitting",
     )
 
     args = parser.parse_args()
 
     if args.no_async:
-        os.environ['NAPARI_ASYNC'] = '0'
+        os.environ["NAPARI_ASYNC"] = "0"
     else:
-        os.environ['NAPARI_ASYNC'] = '1'
-
+        os.environ["NAPARI_ASYNC"] = "1"
 
     if not args.file_path.exists():
         print(f"Error: File not found: {args.file_path}")
@@ -113,9 +117,21 @@ def main() -> None:
             scale[-1] = pix.x
 
         if meta.is_rgb:
-            napari.imshow(data, rgb=True, scale=scale, axis_labels='TCZYX')
+            napari.imshow(data, rgb=True, scale=scale, axis_labels="TCZYX")
         else:
-            napari.imshow(data, channel_axis=1, scale=scale, axis_labels='TZYX')
+            if args.no_split_channels:
+                channel_axis = None
+                axis_labels = "TCZYX"
+            else:
+                channel_axis = 1
+                axis_labels = "TZYX"
+
+            napari.imshow(
+                data,
+                channel_axis=channel_axis,
+                scale=scale,
+                axis_labels=axis_labels,
+            )
         napari.run()
 
 
