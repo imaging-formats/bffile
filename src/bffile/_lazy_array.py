@@ -6,7 +6,6 @@ import math
 from itertools import product
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-import dask
 import numpy as np
 
 from bffile._utils import get_dask_tile_chunks
@@ -15,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     import dask.array
-    import xarray as xr
+    import xarray
 
     from bffile._biofile import BioFile
     from bffile._zarr import BFArrayStore
@@ -300,7 +299,7 @@ class LazyBioArray:
 
         return da.from_array(self, chunks=chunks)  # type: ignore
 
-    def to_xarray(self) -> xr.DataArray:
+    def to_xarray(self) -> xarray.DataArray:
         """Return xarray.DataArray for specified series and resolution.
 
         The returned DataArray has `.dims` and `.coords` attributes populated according

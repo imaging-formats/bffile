@@ -124,6 +124,7 @@ def test_series_as_array(multiseries_file: Path) -> None:
 
 
 def test_series_to_dask(multiseries_file: Path) -> None:
+    pytest.importorskip("dask")
     with BioFile(multiseries_file) as bf:
         darr = bf[0].to_dask()
         assert darr.shape == bf[0].shape
