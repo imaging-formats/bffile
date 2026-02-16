@@ -94,15 +94,15 @@ def main() -> None:
         meta = bf.core_metadata(series=args.series)
         method = bf.to_dask if args.dask else bf.as_array
         scale = None
-        if meta.resolution_count > 1:
+        if args.res or meta.resolution_count == 1:
+            data = method(series=args.series, resolution=args.res or 0)
+            scale = [1] * (data.ndim - 1)
+        elif meta.resolution_count > 1:
             data = [
                 method(series=args.series, resolution=res)
                 for res in range(meta.resolution_count)
             ]
             scale = [1] * (data[0].ndim - 1)
-        else:
-            data = method(series=args.series, resolution=args.res or 0)
-            scale = [1] * (data.ndim - 1)
 
         pix = physical_pixel_sizes(bf.ome_metadata)
         if pix.z:
