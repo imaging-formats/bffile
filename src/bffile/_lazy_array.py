@@ -6,10 +6,16 @@ import math
 from itertools import product
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
+import dask
 import numpy as np
+
+from bffile._utils import get_dask_tile_chunks
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+
+    import dask.array
+    import xarray as xr
 
     from bffile._biofile import BioFile
     from bffile._zarr import BFArrayStore
@@ -122,9 +128,9 @@ class LazyBioArray:
 
         # View state tracking (for lazy slicing)
         # Initialize to full range (root array shows entire dataset)
-        self._bounds_tczyxs = tuple(slice(0, x) for x in full)
+        self._bounds_tczyxs = cast("BoundsTCZYXS", tuple(slice(0, x) for x in full))
         self._squeezed_tczyxs = (False, False, False, False, False, meta.shape.rgb <= 1)
-        self._shape = self._compute_effective_shape()
+        self._shape = self._effective_shape()
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -226,7 +232,98 @@ class LazyBioArray:
 
         return coords
 
-    def zarr_store(
+    def to_dask(
+        self,
+        *,
+        chunks: str | tuple = "auto",
+        tile_size: tuple[int, int] | str | None = None,
+    ) -> dask.array.Array:
+        """Create dask array for lazy computation on Bio-Formats data.
+
+        Returns a dask array in TCZYX[r] order that wraps this lazy array.
+        Uses single-threaded scheduler for Bio-Formats thread safety.
+
+        Parameters
+        ----------
+        chunks : str or tuple, default "auto"
+            Chunk specification. Examples:
+            - "auto": Let dask decide (default)
+            - (1, 1, 1, -1, -1): Full Y,X planes per T,C,Z
+            - (1, 1, 1, 512, 512): 512x512 tiles
+            Mutually exclusive with tile_size.
+        tile_size : tuple[int, int] or "auto", optional
+            Tile-based chunking for Y,X dimensions (T,C,Z get chunks of 1).
+            - (512, 512): Use 512x512 tiles
+            - "auto": Query Bio-Formats optimal tile size
+            Mutually exclusive with chunks.
+        """
+        try:
+            import dask.array as da
+        except ImportError as e:
+            raise ImportError(
+                "Dask is required for to_dask(). "
+                "Please install with `pip install bffile[dask]`"
+            ) from e
+
+        # Validate mutually exclusive parameters
+        if tile_size is not None and chunks != "auto":
+            raise ValueError(
+                "chunks and tile_size are mutually exclusive. "
+                "When using tile_size, leave chunks as 'auto' (default)."
+            )
+
+        # Compute chunks from tile_size if provided
+        if tile_size is not None:
+            # Validate tile_size format
+            if tile_size == "auto":
+                # Query Bio-Formats for optimal tile size
+                rdr = self._biofile._ensure_java_reader()
+                rdr.setSeries(self._series)
+                rdr.setResolution(self._resolution)
+                tile_size = (rdr.getOptimalTileHeight(), rdr.getOptimalTileWidth())
+            elif not (
+                isinstance(tile_size, tuple)
+                and len(tile_size) == 2
+                and all(isinstance(x, int) for x in tile_size)
+            ):
+                raise ValueError(
+                    f"tile_size must be a tuple of two integers or 'auto', "
+                    f"got {tile_size}"
+                )
+
+            # Compute chunks based on tile size
+            # Use the view's actual shape (from bounds), not the full original shape
+            nt, nc, nz, ny, nx, nrgb = self._unsqueezed_view_shape()
+            chunks = get_dask_tile_chunks(nt, nc, nz, ny, nx, tile_size)
+            if nrgb > 1:
+                chunks = (*chunks, nrgb)  # type: ignore[assignment]
+
+        return da.from_array(self, chunks=chunks)  # type: ignore
+
+    def to_xarray(self) -> xr.DataArray:
+        """Return xarray.DataArray for specified series and resolution.
+
+        The returned DataArray has `.dims` and `.coords` attributes populated according
+        to the metadata. Dimension and coord names will be one of: `TCZYXS`, where `S`
+        represents the RGB/RGBA channels if present.  The parsed `ome_types.OME` object
+        is also available in the `.attrs['ome_metadata']` attribute of the DataArray.
+        """
+        try:
+            import xarray as xr
+        except ImportError as e:
+            raise ImportError(
+                "xarray is required for to_xarray(). "
+                "Install with `pip install bffile[xarray]`"
+            ) from e
+
+        return xr.DataArray(
+            self,
+            dims=self.dims,
+            coords=self.coords,
+            attrs={"ome_metadata": self._biofile.ome_metadata},
+        )
+
+    def to_zarr_store(
         self,
         *,
         tile_size: tuple[int, int] | None = None,
@@ -253,8 +350,8 @@ class LazyBioArray:
 
         Returns
         -------
-        BioFormatsStore
-            A zarr v3 Store suitable for ``zarr.open(store, mode="r")``.
+        BFArrayStore
+            A zarr v3 Store suitable for ``zarr.open_array(store, mode="r")``.
         """
         from bffile._zarr import BFArrayStore
 
@@ -379,22 +476,26 @@ class LazyBioArray:
         view._dtype = meta.dtype
         view._bounds_tczyxs = bounds_tczyxs
         view._squeezed_tczyxs = squeezed_tczyxs
-        view._shape = view._compute_effective_shape()
+        view._shape = view._effective_shape()
         return view
 
-    def _compute_effective_shape(self) -> tuple[int, ...]:
+    def _unsqueezed_view_shape(self) -> tuple[int, int, int, int, int, int]:
+        """Compute full 6D TCZYXS shape from bounds (includes squeezed dims)."""
+        return tuple(  # type: ignore[return-value]  (it is always 6D)
+            bound.indices(size)[1] - bound.indices(size)[0]
+            for size, bound in zip(
+                self._full_shape_tczyxs, self._bounds_tczyxs, strict=True
+            )
+        )
+
+    def _effective_shape(self) -> tuple[int, ...]:
         """Compute visible shape from bounds, excluding squeezed dimensions."""
-        shape = []
-        for size, bound, squeezed in zip(
-            self._full_shape_tczyxs,
-            self._bounds_tczyxs,
-            self._squeezed_tczyxs,
-            strict=True,
-        ):
-            if not squeezed:
-                start, stop, _ = bound.indices(size)
-                shape.append(stop - start)
-        return tuple(shape)
+        view_shape = self._unsqueezed_view_shape()
+        return tuple(
+            size
+            for size, squeezed in zip(view_shape, self._squeezed_tczyxs, strict=True)
+            if not squeezed
+        )
 
     def _map_user_index_to_tczyxs(
         self, key: tuple[slice | int, ...]

@@ -106,7 +106,7 @@ def open_zarr_array(
         raise ImportError("zarr must be installed to use open_zarr_array") from None
 
     with BioFile(path).ensure_open() as bf:
-        store = bf.as_array(series=series, resolution=resolution).zarr_store(
+        store = bf.as_array(series=series, resolution=resolution).to_zarr_store(
             rgb_as_channels=rgb_as_channels
         )
     return zarr.open_array(store, mode="r")
@@ -143,5 +143,5 @@ def open_ome_zarr_group(
         raise ImportError("zarr must be installed to use open_ome_zarr_group") from None
 
     with BioFile(path).ensure_open() as bf:
-        store = bf.as_zarr_group()
+        store = bf.to_zarr_store()
     return zarr.open_group(store, mode="r")

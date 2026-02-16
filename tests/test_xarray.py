@@ -12,10 +12,10 @@ except ImportError:
     pytest.skip("xarray is not installed", allow_module_level=True)
 
 
-def test_as_xarray_basic(opened_biofile: BioFile) -> None:
-    """Test basic as_xarray functionality."""
+def test_to_xarray_basic(opened_biofile: BioFile) -> None:
+    """Test basic to_xarray functionality."""
     lzarr = opened_biofile.as_array()
-    xarr = opened_biofile.as_xarray()
+    xarr = opened_biofile.to_xarray()
 
     # ensure the underlying data is still a LazyBioArray
     assert isinstance(xarr, xarray.DataArray)
@@ -47,10 +47,10 @@ def test_as_xarray_basic(opened_biofile: BioFile) -> None:
         mock_array.assert_called_with(xarr_t0c0.variable._data)
 
 
-def test_as_xarray_rgb(rgb_file: Path) -> None:
-    """Test as_xarray with RGB images."""
+def test_to_xarray_rgb(rgb_file: Path) -> None:
+    """Test to_xarray with RGB images."""
     with BioFile(rgb_file) as bf:
-        xarr = bf.as_xarray()
+        xarr = bf.to_xarray()
 
         # Should work for RGB
         meta = bf.core_metadata(0, 0)
@@ -58,9 +58,9 @@ def test_as_xarray_rgb(rgb_file: Path) -> None:
         assert "S" in xarr.dims
 
 
-def test_as_xarray_coords_from_ome(opened_biofile: BioFile) -> None:
+def test_to_xarray_coords_from_ome(opened_biofile: BioFile) -> None:
     """Test that coordinates are properly derived from OME metadata."""
-    xarr = opened_biofile.as_xarray()
+    xarr = opened_biofile.to_xarray()
     ome = opened_biofile.ome_metadata
     pixels = ome.images[0].pixels
 

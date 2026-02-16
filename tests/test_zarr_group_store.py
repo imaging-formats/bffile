@@ -23,10 +23,10 @@ else:
 TEST_DATA = Path(__file__).parent / "data"
 
 
-def test_as_zarr_group_basic(simple_file: Path) -> None:
+def test_to_zarr_basic(simple_file: Path) -> None:
     """Test basic group store creation."""
     with BioFile(simple_file) as bf:
-        store = bf.as_zarr_group()
+        store = bf.to_zarr_store()
         assert store is not None
         assert store.supports_listing
         assert not store.supports_writes
@@ -36,7 +36,7 @@ def test_as_zarr_group_basic(simple_file: Path) -> None:
 def test_root_metadata(simple_file: Path) -> None:
     """Test root group metadata structure (NGFF v0.5)."""
     with BioFile(simple_file) as bf:
-        store = bf.as_zarr_group()
+        store = bf.to_zarr_store()
         # Get root metadata
 
         data = asyncio.run(store.get("zarr.json", default_buffer_prototype()))
@@ -54,7 +54,7 @@ def test_root_metadata(simple_file: Path) -> None:
 def test_ome_metadata(simple_file: Path) -> None:
     """Test OME group metadata (NGFF v0.5)."""
     with BioFile(simple_file) as bf:
-        store = bf.as_zarr_group()
+        store = bf.to_zarr_store()
 
         # Test OME group metadata
         data = asyncio.run(store.get("OME/zarr.json", default_buffer_prototype()))
@@ -76,7 +76,7 @@ def test_ome_metadata(simple_file: Path) -> None:
 def test_ome_xml_metadata(simple_file: Path) -> None:
     """Test OME-XML metadata file."""
     with BioFile(simple_file) as bf:
-        store = bf.as_zarr_group()
+        store = bf.to_zarr_store()
 
         # Get OME-XML
         proto = default_buffer_prototype()
@@ -92,7 +92,7 @@ def test_ome_xml_metadata(simple_file: Path) -> None:
 def test_series_metadata(simple_file: Path) -> None:
     """Test series/multiscales group metadata (NGFF v0.5)."""
     with BioFile(simple_file) as bf:
-        store = bf.as_zarr_group()
+        store = bf.to_zarr_store()
 
         # Test first series metadata (which IS the multiscales group)
         data = asyncio.run(store.get("0/zarr.json", default_buffer_prototype()))
@@ -109,7 +109,7 @@ def test_series_metadata(simple_file: Path) -> None:
 def test_multiscales_metadata(simple_file: Path) -> None:
     """Test multiscales group metadata (NGFF v0.5)."""
     with BioFile(simple_file) as bf:
-        store = bf.as_zarr_group()
+        store = bf.to_zarr_store()
 
         # Get multiscales metadata (series group IS multiscales in v0.5)
         data = asyncio.run(store.get("0/zarr.json", default_buffer_prototype()))
@@ -212,7 +212,7 @@ def test_multi_resolution(pyramid_file: Path) -> None:
 def test_invalid_keys_return_none_and_false(simple_file: Path) -> None:
     """Malformed or out-of-range keys should not raise from get()/exists()."""
     with BioFile(simple_file) as bf:
-        store = bf.as_zarr_group()
+        store = bf.to_zarr_store()
         proto = default_buffer_prototype()
 
         invalid_keys = [
@@ -237,7 +237,7 @@ def test_output_valid_zarr(any_file: Path, tmp_path: Path) -> None:
         if arr.nbytes > 2_000_000_000:  # Skip arrays > 2GB
             pytest.skip(f"Array too large ({arr.nbytes / 1e9:.2f} GB)")
 
-        biofile.as_zarr_group().save(dest)
+        biofile.to_zarr_store().save(dest)
     try:
         import yaozarrs
 

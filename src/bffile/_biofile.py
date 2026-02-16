@@ -463,10 +463,8 @@ class BioFile(Sequence[Series]):
 
         return LazyBioArray(self, series, resolution)
 
-    def as_zarr_group(
-        self,
-        *,
-        tile_size: tuple[int, int] | None = None,
+    def to_zarr_store(
+        self, *, tile_size: tuple[int, int] | None = None
     ) -> BFOmeZarrStore:
         """Return a zarr v3 group store containing all series and resolutions.
 
@@ -506,7 +504,7 @@ class BioFile(Sequence[Series]):
 
         >>> import zarr
         >>> with BioFile("image.nd2") as bf:
-        ...     group = zarr.open_group(bf.as_zarr_group(), mode="r")
+        ...     group = zarr.open_group(bf.to_zarr_store(), mode="r")
         ...     # Access first series, full resolution
         ...     arr = group["0/0"]
         ...     data = arr[0, 0, 0]
@@ -515,12 +513,12 @@ class BioFile(Sequence[Series]):
         ...     print(group["0"].attrs["ome"]["multiscales"])
         ...
         ...     # Save to disk
-        ...     bf.as_zarr_group().save("output.ome.zarr")
+        ...     bf.to_zarr_store().save("output.ome.zarr")
 
         Notes
         -----
         - BioFile must remain open while using the store
-        - For single array access, prefer `as_array().zarr_store()` (simpler)
+        - For single array access, prefer `as_array().to_zarr_store()` (simpler)
         - This creates the full hierarchy needed for multi-series/multi-resolution
           visualization tools
         - Conforms to NGFF v0.5 specification
@@ -533,13 +531,14 @@ class BioFile(Sequence[Series]):
         self,
         series: int = 0,
         resolution: int = 0,
+        *,
         chunks: str | tuple = "auto",
         tile_size: tuple[int, int] | str | None = None,
     ) -> dask.array.Array:
         """Create dask array for lazy computation on Bio-Formats data.
 
         Returns a dask array in TCZYX[r] order that wraps a
-        [`LazyBioArray`][bffile.LazyBioArray]. Uses single-threaded scheduler by default
+        [`LazyBioArray`][bffile.LazyBioArray]. Uses single-threaded scheduler
         for Bio-Formats thread safety.
 
         Parameters
@@ -582,74 +581,25 @@ class BioFile(Sequence[Series]):
         - BioFile must remain open during computation
         - Uses synchronous scheduler by default (required for thread safety)
         """
-        try:
-            import dask.array as da
-        except ImportError as e:
-            raise ImportError(
-                "Dask is required for to_dask(). "
-                "Please install with `pip install bffile[dask]`"
-            ) from e
-
-        # Validate mutually exclusive parameters
-        if tile_size is not None and chunks != "auto":
-            raise ValueError(
-                "chunks and tile_size are mutually exclusive. "
-                "When using tile_size, leave chunks as 'auto' (default)."
-            )
-
-        # Compute chunks from tile_size if provided
-        if tile_size is not None:
-            # Validate tile_size format
-            if tile_size == "auto":
-                # Query Bio-Formats for optimal tile size
-                reader = self._ensure_java_reader()
-                reader.setSeries(series)
-                reader.setResolution(resolution)
-                tile_size = (
-                    reader.getOptimalTileHeight(),
-                    reader.getOptimalTileWidth(),
-                )
-            elif not (
-                isinstance(tile_size, tuple)
-                and len(tile_size) == 2
-                and all(isinstance(x, int) for x in tile_size)
-            ):
-                raise ValueError(
-                    f"tile_size must be a tuple of two integers or 'auto', "
-                    f"got {tile_size}"
-                )
-
-            # Compute chunks based on tile size
-            meta = self.core_metadata(series, resolution)
-            nt, nc, nz, ny, nx, nrgb = meta.shape
-            chunks = _utils.get_dask_tile_chunks(nt, nc, nz, ny, nx, tile_size)
-            if nrgb > 1:
-                chunks = (*chunks, nrgb)  # type: ignore[assignment]
-
         lazy_arr = self.as_array(series=series, resolution=resolution)
-        return da.from_array(lazy_arr, chunks=chunks)  # type: ignore
+        return lazy_arr.to_dask(chunks=chunks, tile_size=tile_size)
 
-    def as_xarray(
-        self,
-        series: int = 0,
-        resolution: int = 0,
-    ) -> xr.DataArray:
-        """Create xarray.DataArray with OME metadata as coordinates."""
-        try:
-            import xarray as xr
-        except ImportError as e:
-            raise ImportError(
-                "xarray is required for as_xarray(). "
-                "Install with `pip install bffile[xarray]`"
-            ) from e
+    def to_xarray(self, series: int = 0, resolution: int = 0) -> xr.DataArray:
+        """Return xarray.DataArray for specified series and resolution.
 
-        arr = self.as_array(series=series, resolution=resolution)
-        return xr.DataArray(
-            arr,
-            dims=arr.dims,
-            coords=arr.coords,
-            attrs={"ome_metadata": self.ome_metadata},
-        )
+        The returned DataArray has `.dims` and `.coords` attributes populated according
+        to the metadata. Dimension and coord names will be one of: `TCZYXS`, where `S`
+        represents the RGB/RGBA channels if present. The parsed `ome_types.OME` object
+        is also available in the `.attrs['ome_metadata']` attribute of the DataArray.
+
+        Parameters
+        ----------
+        series : int, optional
+            Series index to read from, by default 0
+        resolution : int, optional
+            Resolution level (0 = full resolution), by default 0
+        """
+        return self.as_array(series=series, resolution=resolution).to_xarray()
 
     @property
     def closed(self) -> bool:

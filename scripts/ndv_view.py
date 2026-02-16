@@ -60,7 +60,7 @@ def main() -> None:
     parser.add_argument(
         "--xarray",
         action="store_true",
-        help="Use as_xarray() for lazy loading instead of as_array()",
+        help="Use to_xarray() for lazy loading instead of as_array()",
     )
     parser.add_argument(
         "--imread",
@@ -83,7 +83,7 @@ def main() -> None:
         # Open the file with bffile
         with BioFile(args.file_path) as bf:
             if args.xarray:
-                data = bf.as_xarray(series=args.series, resolution=args.res)
+                data = bf.to_xarray(series=args.series, resolution=args.res)
             elif args.dask:
                 data = bf.to_dask(series=args.series, resolution=args.res)
             else:

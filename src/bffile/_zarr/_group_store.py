@@ -117,7 +117,7 @@ class BFOmeZarrStore(ReadOnlyStore):
     Examples
     --------
     >>> with BioFile("image.nd2") as bf:
-    ...     group = zarr.open_group(bf.as_zarr_group(), mode="r")
+    ...     group = zarr.open_group(bf.to_zarr_store), mode="r")
     ...     # Access first series, full resolution
     ...     arr = group["0/0"]
     ...     data = arr[0, 0, 0]
@@ -309,7 +309,7 @@ class BFOmeZarrStore(ReadOnlyStore):
         if key not in self._array_stores:
             arr = self._biofile.as_array(series, resolution)
             # Single store with integrated transformations
-            store = arr.zarr_store(
+            store = arr.to_zarr_store(
                 tile_size=self._tile_size,
                 rgb_as_channels=True,  # Interleave RGB into C (OME-Zarr convention)
                 squeeze_singletons=True,  # Omit size-1 dims per NGFF
