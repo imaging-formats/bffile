@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "bffile[dask]",
+#     "bffile[dask,xarray]",
 #     "ndv[vispy,pyqt]",
 # ]
 #
@@ -58,9 +58,14 @@ def main() -> None:
         help="Use to_dask() for lazy loading instead of as_array()",
     )
     parser.add_argument(
+        "--xarray",
+        action="store_true",
+        help="Use as_xarray() for lazy loading instead of as_array()",
+    )
+    parser.add_argument(
         "--imread",
         action="store_true",
-        help="Use imread() method for loading instead of as_array() or to_dask() "
+        help="Use imread() method for loading instead of as_array()"
         "(not recommended for large files)",
     )
 
@@ -77,7 +82,9 @@ def main() -> None:
     else:
         # Open the file with bffile
         with BioFile(args.file_path) as bf:
-            if args.dask:
+            if args.xarray:
+                data = bf.as_xarray(series=args.series, resolution=args.res)
+            elif args.dask:
                 data = bf.to_dask(series=args.series, resolution=args.res)
             else:
                 data = bf.as_array(series=args.series, resolution=args.res)
