@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from itertools import product
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import numpy as np
@@ -424,6 +425,12 @@ class LazyBioArray:
 
         return output
 
+    # this is a hack to allow this object to work with dask da.from_array
+    # dask calls it during `compute_meta` ...
+    # this should NOT be used for any other purpose, it does NOT do what it claims to do
+    def astype(self, dtype: np.dtype) -> Any:
+        return self
+
     def __getitem__(self, key: Any) -> LazyBioArray:
         """
         Index the array with numpy-style syntax, returning a lazy view.
@@ -540,10 +547,10 @@ class LazyBioArray:
         y_start, y_stop, _ = y_slice.indices(self._meta.shape.y)
         x_start, x_stop, _ = x_slice.indices(self._meta.shape.x)
         if y_stop <= y_start or x_stop <= x_start:
+            breakpoint()
             return
 
-        # Acquire lock ONCE for entire batch read
-        # This is much faster than acquiring/releasing on every plane
+        # Acquire lock once for entire batch read
         with self._biofile._lock:
             # Set series and resolution once at start (not on every iteration)
             reader = self._biofile._ensure_java_reader()
@@ -552,22 +559,19 @@ class LazyBioArray:
 
             # Get metadata once (avoid repeated lookups in hot loop)
             meta = self._biofile.core_metadata(self._series, self._resolution)
+            read_plane = self._biofile._read_plane
 
-            # Fast loop - no locking overhead, no validation, minimal copying!
-            # Uses optimized _read_plane that skips all per-call overhead
-            read_plane = self._biofile._read_plane  # Local reference for speed
-            # Precompute which TCZ axes survive squeezing so we avoid
-            # rebuilding index tuples for every plane assignment.
+            # Pre-compute specialized writer to avoid tuple building on each write
             write_plane = _make_plane_writer(output, *squeezed[:3])
 
             rgb_index = self._rgb_index
-            for out_t, t in enumerate(t_range):
-                for out_c, c in enumerate(c_range):
-                    for out_z, z in enumerate(z_range):
-                        plane = read_plane(reader, meta, t, c, z, y_slice, x_slice)
-                        if rgb_index is not None:
-                            plane = plane[..., rgb_index]
-                        write_plane(out_t, out_c, out_z, plane)
+            for (ti, t), (ci, c), (zi, z) in product(
+                enumerate(t_range), enumerate(c_range), enumerate(z_range)
+            ):
+                plane = read_plane(reader, meta, t, c, z, y_slice, x_slice)
+                if rgb_index is not None:
+                    plane = plane[..., rgb_index]
+                write_plane(ti, ci, zi, plane)
 
 
 def _make_plane_writer(
@@ -575,18 +579,18 @@ def _make_plane_writer(
 ) -> Callable[[int, int, int, np.ndarray], None]:
     match (drop_t, drop_c, drop_z):
         case (False, False, False):
-            return lambda ot, oc, oz, plane: output.__setitem__((ot, oc, oz), plane)
+            return lambda t, c, z, plane: output.__setitem__((t, c, z), plane)
         case (False, False, True):
-            return lambda ot, oc, oz, plane: output.__setitem__((ot, oc), plane)
+            return lambda t, c, z, plane: output.__setitem__((t, c), plane)
         case (False, True, False):
-            return lambda ot, oc, oz, plane: output.__setitem__((ot, oz), plane)
+            return lambda t, c, z, plane: output.__setitem__((t, z), plane)
         case (False, True, True):
-            return lambda ot, oc, oz, plane: output.__setitem__((ot,), plane)
+            return lambda t, c, z, plane: output.__setitem__((t,), plane)
         case (True, False, False):
-            return lambda ot, oc, oz, plane: output.__setitem__((oc, oz), plane)
+            return lambda t, c, z, plane: output.__setitem__((c, z), plane)
         case (True, False, True):
-            return lambda ot, oc, oz, plane: output.__setitem__((oc,), plane)
+            return lambda t, c, z, plane: output.__setitem__((c,), plane)
         case (True, True, False):
-            return lambda ot, oc, oz, plane: output.__setitem__((oz,), plane)
+            return lambda t, c, z, plane: output.__setitem__((z,), plane)
         case (True, True, True):
-            return lambda ot, oc, oz, plane: output.__setitem__(slice(None), plane)
+            return lambda t, c, z, plane: output.__setitem__(slice(None), plane)

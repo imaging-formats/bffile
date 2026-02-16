@@ -28,8 +28,9 @@ that's where [`BioFile`][bffile.BioFile] comes in.
 from bffile import BioFile
 
 with BioFile("image.nd2") as bf:
-    arr = bf.as_array()   # lazy array accessor
-    plane = arr[0, 0, 2]  # read a single plane from disk
+    arr = bf.as_array()       # lazy array accessor
+    plane = arr[0, 0, 2]      # indexing is just a view — no data read yet!
+    data = np.asarray(plane)  # call np.asarray to read the data into memory
 ```
 
 ## Opening Files with BioFile
@@ -147,9 +148,9 @@ read more data later.
 
 ## The Series Data Model
 
-Bio-Formats models files as a sequence of **series** (e.g., wells in a plate,
+Bio-Formats models files as a sequence of __series__ (e.g., wells in a plate,
 fields of view, tiles in a mosaic, etc...). Each series is a 5D dataset with shape
-`(T, C, Z, Y, X)`, and may have multiple **resolution** levels (pyramid
+`(T, C, Z, Y, X)`, and may have multiple __resolution__ levels (pyramid
 layers).
 
 !!! info "Mental model"
@@ -169,7 +170,7 @@ If you're familiar with the Bio-Formats Java API, you will be used
 to using `setSeries` to change the active series before following
 up with calls to read data or metadata.
 
-`bffile.BioFile` aims for a **stateless** API: all methods that pertain to
+`bffile.BioFile` aims for a __stateless__ API: all methods that pertain to
 a specific series or resolution level take an explicit
 `series` argument and an optional `resolution` level.  Omitting these
 arguments defaults to `series=0` and `resolution=0`.  As a convenience,
@@ -233,7 +234,7 @@ with BioFile("image.nd2") as bf:
 ```
 
 No data is loaded when you create the array. Data is read from disk
-**only when you index into it**:
+__only when you index into it__:
 
 ```python
 with BioFile("image.nd2") as bf:
@@ -256,16 +257,16 @@ with BioFile("image.nd2") as bf:
 
 LazyBioArray supports:
 
-- **Integer indexing** squeezes that dimension: `arr[0, 0, 2]` returns
+- __Integer indexing__ squeezes that dimension: `arr[0, 0, 2]` returns
   shape `(Y, X)` instead of `(1, 1, 1, Y, X)`.
-- **Slice indexing** keeps the dimension: `arr[0:1, 0:1, 2:3]` returns
+- __Slice indexing__ keeps the dimension: `arr[0:1, 0:1, 2:3]` returns
   shape `(1, 1, 1, Y, X)`.
-- **Ellipsis**: `arr[..., 100:200, 50:150]` works as expected.
-- **Negative indices**: `arr[-1]` reads the last timepoint.
+- __Ellipsis__: `arr[..., 100:200, 50:150]` works as expected.
+- __Negative indices__: `arr[-1]` reads the last timepoint.
 
 !!! warning "Unsupported indexing"
     Step slicing (`arr[::2]`), fancy indexing (`arr[[0, 2]]`), and
-    boolean masks (`arr[arr > 100]`) are **not** supported and will raise
+    boolean masks (`arr[arr > 100]`) are __not__ supported and will raise
     `NotImplementedError`.
 
 ### Sub-region reads are efficient
