@@ -333,8 +333,8 @@ You will find each of these methods on
 [`xarray`](https://docs.xarray.dev/en/stable/) provides a powerful data
 structure for working with labeled, multi-dimensional arrays.  Bioforamts data
 is naturally represented as an `xarray.DataArray` with dimensions (`"T", "C",
-"Z", "Y", "X"`, and sometimes `"S"` for RGB)`.  Metadata is parsed and used to
-populate the`.dims` and `.coords` attributes.  As you index into the array, the
+"Z", "Y", "X"`, and sometimes `"S"` for RGB).  Metadata is parsed and used to
+populate the `.dims` and `.coords` attributes.  As you index into the array, the
 lazy reading behavior is preserved, so you can explore large datasets without
 loading everything into memory.  Semantics for coords are as follows:
 
