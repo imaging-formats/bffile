@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.10, <3.14"
 # dependencies = [
 #     "bffile[dask]",
 #     "napari[pyqt6]",
@@ -24,6 +24,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import napari  # pyright: ignore[reportMissingImports]
@@ -64,8 +65,19 @@ def main() -> None:
         help="Use imread() method for loading instead of as_array() or to_dask() "
         "(not recommended for large files)",
     )
+    parser.add_argument(
+        "--no_async",
+        action="store_true",
+        help="Disable asynchronous loading",
+    )
 
     args = parser.parse_args()
+
+    if args.no_async:
+        os.environ['NAPARI_ASYNC'] = '0'
+    else:
+        os.environ['NAPARI_ASYNC'] = '1'
+
 
     if not args.file_path.exists():
         print(f"Error: File not found: {args.file_path}")
@@ -87,18 +99,23 @@ def main() -> None:
                 method(series=args.series, resolution=res)
                 for res in range(meta.resolution_count)
             ]
+            scale = [1] * (data[0].ndim - 1)
         else:
             data = method(series=args.series, resolution=args.res or 0)
             scale = [1] * (data.ndim - 1)
-            pix = physical_pixel_sizes(bf.ome_metadata)
-            if pix.z:
-                scale[1] = pix.z
-            if pix.y:
-                scale[2] = pix.y
-            if pix.x:
-                scale[3] = pix.x
 
-        napari.imshow(data, channel_axis=1, scale=scale)
+        pix = physical_pixel_sizes(bf.ome_metadata)
+        if pix.z:
+            scale[-3] = pix.z
+        if pix.y:
+            scale[-2] = pix.y
+        if pix.x:
+            scale[-1] = pix.x
+
+        if meta.is_rgb:
+            napari.imshow(data, rgb=True, scale=scale, axis_labels='TCZYX')
+        else:
+            napari.imshow(data, channel_axis=1, scale=scale, axis_labels='TZYX')
         napari.run()
 
 
