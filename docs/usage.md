@@ -28,8 +28,9 @@ that's where [`BioFile`][bffile.BioFile] comes in.
 from bffile import BioFile
 
 with BioFile("image.nd2") as bf:
-    arr = bf.as_array()   # lazy array accessor
-    plane = arr[0, 0, 2]  # read a single plane from disk
+    arr = bf.as_array()       # lazy array accessor
+    plane = arr[0, 0, 2]      # indexing is just a view — no data read yet!
+    data = np.asarray(plane)  # call np.asarray to read the data into memory
 ```
 
 ## Opening Files with BioFile
@@ -147,9 +148,9 @@ read more data later.
 
 ## The Series Data Model
 
-Bio-Formats models files as a sequence of **series** (e.g., wells in a plate,
+Bio-Formats models files as a sequence of __series__ (e.g., wells in a plate,
 fields of view, tiles in a mosaic, etc...). Each series is a 5D dataset with shape
-`(T, C, Z, Y, X)`, and may have multiple **resolution** levels (pyramid
+`(T, C, Z, Y, X)`, and may have multiple __resolution__ levels (pyramid
 layers).
 
 !!! info "Mental model"
@@ -169,7 +170,7 @@ If you're familiar with the Bio-Formats Java API, you will be used
 to using `setSeries` to change the active series before following
 up with calls to read data or metadata.
 
-`bffile.BioFile` aims for a **stateless** API: all methods that pertain to
+`bffile.BioFile` aims for a __stateless__ API: all methods that pertain to
 a specific series or resolution level take an explicit
 `series` argument and an optional `resolution` level.  Omitting these
 arguments defaults to `series=0` and `resolution=0`.  As a convenience,
@@ -232,50 +233,54 @@ with BioFile("image.nd2") as bf:
     # LazyBioArray(shape=(10, 2, 5, 512, 512), dtype=uint16, file='image.nd2')
 ```
 
-No data is loaded when you create the array. Data is read from disk
-**only when you index into it**:
+No data is loaded when you create the array. Indexing creates lazy views
+_without reading data_. Data is read from disk only when you materialize the
+view with `np.asarray()` or numpy other operations:
 
 ```python
 with BioFile("image.nd2") as bf:
     arr = bf[0].as_array()  # no reading yet!
 
-    # read a single plane (t=0, c=0, z=2)
-    plane = arr[0, 0, 2]              # shape: (512, 512)
+    # create a lazy view of a single plane (t=0, c=0, z=2)
+    plane_view = arr[0, 0, 2]              # LazyBioArray, shape: (512, 512)
+    plane = np.asarray(plane_view)         # NOW data is read from disk
 
-    # read all timepoints for one channel
-    timeseries = arr[:, 0, 2]         # shape: (10, 512, 512)
+    # create lazy view of all timepoints for one channel and z-slice
+    timeseries_view = arr[:, 0, 2]         # LazyBioArray, shape: (10, 512, 512)
+    timeseries = np.asarray(timeseries_view)  # reads data
 
-    # read a (100, 100) sub-region within the YX plane
+    # lazy view of a (100, 100) sub-region within the YX plane
     # in the third timepoint, for all channels, and the first z-slice
-    # only the requested pixels are read from disk, not the full plane
-    roi = arr[2, :, 0, 100:200, 50:150]  # shape: (2, 100, 100)
+    roi_view = arr[2, :, 0, 100:200, 50:150]  # LazyBioArray, shape: (2, 100, 100)
+    roi = np.asarray(roi_view)             # only the requested pixels are read
 
     # materialize the full dataset
-    full = arr[:]                      # shape: (10, 2, 5, 512, 512)
+    full = np.asarray(arr)                 # shape: (10, 2, 5, 512, 512)
 ```
 
-LazyBioArray supports:
+LazyBioArray indexing creates lazy views with the following behavior:
 
-- **Integer indexing** squeezes that dimension: `arr[0, 0, 2]` returns
-  shape `(Y, X)` instead of `(1, 1, 1, Y, X)`.
-- **Slice indexing** keeps the dimension: `arr[0:1, 0:1, 2:3]` returns
-  shape `(1, 1, 1, Y, X)`.
-- **Ellipsis**: `arr[..., 100:200, 50:150]` works as expected.
-- **Negative indices**: `arr[-1]` reads the last timepoint.
+- __Integer indexing__ squeezes that dimension: `arr[0, 0, 2]` returns a
+  LazyBioArray view with shape `(Y, X)` instead of `(1, 1, 1, Y, X)`.
+- __Slice indexing__ keeps the dimension: `arr[0:1, 0:1, 2:3]` returns a view
+  with shape `(1, 1, 1, Y, X)`.
+- __Ellipsis__: `arr[..., 100:200, 50:150]` works as expected.
+- __Negative indices__: `arr[-1]` creates a view of the last timepoint.
 
 !!! warning "Unsupported indexing"
     Step slicing (`arr[::2]`), fancy indexing (`arr[[0, 2]]`), and
-    boolean masks (`arr[arr > 100]`) are **not** supported and will raise
+    boolean masks (`arr[arr > 100]`) are __not__ supported and will raise
     `NotImplementedError`.
 
 ### Sub-region reads are efficient
 
-When you slice the Y or X dimensions, only the requested pixels are
-read from disk — not the full plane:
+When you slice the Y or X dimensions and then materialize the view, only the
+requested pixels are read from disk — not the full plane:
 
 ```python
-# reads only a 100x100 pixel region from each plane
-roi = arr[:, :, :, 200:300, 300:400]
+# create a view of a 100x100 pixel region
+roi_view = arr[:, :, :, 200:300, 300:400]  # lazy view, no I/O yet
+roi = np.asarray(roi_view)  # reads only the 100x100 region from each plane
 ```
 
 This makes `LazyBioArray` well-suited for exploring large images without
