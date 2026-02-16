@@ -47,7 +47,7 @@ class BFArrayStore(ReadOnlyStore):
     Via LazyBioArray convenience method:
 
     >>> with BioFile("image.nd2") as bf:
-    ...     store = bf.as_array().zarr_store()
+    ...     store = bf.as_array().to_zarr_store()
     ...     arr = zarr.open(store, mode="r")
     ...     data = arr[0, 0, 0]
 

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from threading import RLock
-from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 import jpype
 import numpy as np
@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
     from bffile._lazy_array import LazyBioArray
     from bffile._zarr import BFOmeZarrStore
+    from bffile._zarr._array_store import BFArrayStore
 
 
 @dataclass(frozen=True)
@@ -463,9 +464,28 @@ class BioFile(Sequence[Series]):
 
         return LazyBioArray(self, series, resolution)
 
+    @overload
     def to_zarr_store(
-        self, *, tile_size: tuple[int, int] | None = None
-    ) -> BFOmeZarrStore:
+        self,
+        series: Literal[None] = ...,
+        *,
+        tile_size: tuple[int, int] | None = ...,
+    ) -> BFOmeZarrStore: ...
+    @overload
+    def to_zarr_store(
+        self,
+        series: int,
+        resolution: int = ...,
+        *,
+        tile_size: tuple[int, int] | None = ...,
+    ) -> BFArrayStore: ...
+    def to_zarr_store(
+        self,
+        series: int | None = None,
+        resolution: int = 0,
+        *,
+        tile_size: tuple[int, int] | None = None,
+    ) -> BFOmeZarrStore | BFArrayStore:
         """Return a zarr v3 group store containing all series and resolutions.
 
         Creates an OME-ZARR group structure following NGFF v0.5 specification,
@@ -489,6 +509,13 @@ class BioFile(Sequence[Series]):
 
         Parameters
         ----------
+        series : int, optional
+            If provided, only return the specified series and resolution as a single
+            array store. By default, returns the full group store with all series and
+            resolutions.
+        resolution : int, optional
+            Resolution level (0 = full resolution), by default 0. Only used if `series`
+            is specified.
         tile_size : tuple[int, int], optional
             If provided, Y and X are chunked into tiles of this size instead of
             full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``.
@@ -517,15 +544,18 @@ class BioFile(Sequence[Series]):
 
         Notes
         -----
-        - BioFile must remain open while using the store
         - For single array access, prefer `as_array().to_zarr_store()` (simpler)
         - This creates the full hierarchy needed for multi-series/multi-resolution
           visualization tools
         - Conforms to NGFF v0.5 specification
         """
-        from bffile._zarr._group_store import BFOmeZarrStore
+        if series is None:
+            from bffile._zarr._group_store import BFOmeZarrStore
 
-        return BFOmeZarrStore(self, tile_size=tile_size)
+            return BFOmeZarrStore(self, tile_size=tile_size)
+
+        lazy = self.as_array(series=series, resolution=resolution)
+        return lazy.to_zarr_store(tile_size=tile_size)
 
     def to_dask(
         self,

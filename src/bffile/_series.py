@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import dask.array
     import numpy as np
+    import xarray
 
     from bffile._biofile import BioFile
     from bffile._lazy_array import LazyBioArray
+    from bffile._zarr._array_store import BFArrayStore
 
 
 class Series:
@@ -86,6 +88,7 @@ class Series:
     def to_dask(
         self,
         resolution: int = 0,
+        *,
         chunks: str | tuple = "auto",
         tile_size: tuple[int, int] | str | None = None,
     ) -> dask.array.Array:
@@ -100,12 +103,35 @@ class Series:
         tile_size : tuple[int, int] or "auto", optional
             Tile-based chunking for Y,X dimensions.
         """
-        return self._biofile.to_dask(
-            self._index,
-            resolution,
-            chunks=chunks,
-            tile_size=tile_size,
-        )
+        lazy = self.as_array(resolution=resolution)
+        return lazy.to_dask(chunks=chunks, tile_size=tile_size)
+
+    def to_xarray(self, resolution: int = 0) -> xarray.DataArray:
+        """Create an xarray DataArray for this series.
+
+        Parameters
+        ----------
+        resolution : int, optional
+            Resolution level (0 = full resolution), by default 0.
+        """
+        lazy = self.as_array(resolution=resolution)
+        return lazy.to_xarray()
+
+    def to_zarr_store(
+        self, resolution: int = 0, *, tile_size: tuple[int, int] | None = None
+    ) -> BFArrayStore:
+        """Create a Zarr store for this series.
+
+        Parameters
+        ----------
+        resolution : int, optional
+            Resolution level (0 = full resolution), by default 0.
+        tile_size : tuple[int, int], optional
+            If provided, Y and X are chunked into tiles of this size instead of
+            full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``.
+        """
+        lazy = self.as_array(resolution=resolution)
+        return lazy.to_zarr_store(tile_size=tile_size)
 
     def read_plane(
         self,
