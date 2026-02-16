@@ -104,6 +104,7 @@ jobs:
         env:
           BFF_JAVA_VERSION: ${{ matrix.java-version }}
           BIOFORMATS_VERSION: ${{matrix.bioformats-version}}
+          PYTEST_ADDOPTS: ${{ matrix.resolution == 'lowest-direct' && '-W ignore' || '' }}
 
       - name: Upload coverage
         uses: actions/upload-artifact@v6

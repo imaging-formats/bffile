@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from bffile._biofile import BioFile
     from bffile._zarr import BFArrayStore
@@ -134,6 +134,17 @@ class LazyBioArray:
         self._squeezed_tczyx = (False, False, False, False, False)
         self._rgb_index = slice(None) if meta.shape.rgb > 1 else None
 
+    def dimension_names(self) -> tuple[str, ...]:
+        """Return dimension names (matches shape)."""
+        names = [
+            dim
+            for dim, squeezed in zip("TCZYX", self._squeezed_tczyx, strict=False)
+            if not squeezed
+        ]
+        if self._rgb_index is not None:
+            names.append("S")
+        return tuple(names)
+
     @classmethod
     def _create_view(
         cls,
@@ -180,7 +191,7 @@ class LazyBioArray:
                 shape.append(stop - start)
 
         # Handle RGB dimension
-        if self._rgb_index is not None and not isinstance(self._rgb_index, int):
+        if isinstance(self._rgb_index, slice):
             rgb_start, rgb_stop, _ = self._rgb_index.indices(self._meta.shape.rgb)
             shape.append(rgb_stop - rgb_start)
 
@@ -234,11 +245,7 @@ class LazyBioArray:
 
     def _map_user_index_to_tczyx(
         self, key: tuple[slice | int, ...]
-    ) -> tuple[
-        BoundsTCZYX,
-        SqueezedTCZYX,
-        RGBIndex,
-    ]:
+    ) -> tuple[BoundsTCZYX, SqueezedTCZYX, RGBIndex]:
         """Map user's effective-space index to original TCZYX coordinates."""
         tczyx_key, rgb_key = self._split_key(key)
 
@@ -408,7 +415,6 @@ class LazyBioArray:
 
         # Allocate output with effective shape
         output = np.empty(self._shape, dtype=self._dtype)
-
         # Fill using existing optimized _fill_output (preserves locking!)
         self._fill_output(output, selection, self._squeezed_tczyx)
 
@@ -422,6 +428,23 @@ class LazyBioArray:
             output = output.copy()
 
         return output
+
+    def __array_function__(
+        self, func: Callable, types: list[type], args: tuple, kwargs: dict
+    ) -> Any:
+        # just dispatch to numpy for now - this allows xarray to be lazy
+        # but we could implement some functions natively here in the future if desired
+        def convert_arg(a: Any) -> Any:
+            """Recursively convert LazyBioArray instances to numpy arrays."""
+            if isinstance(a, type(self)):
+                return np.asarray(a)
+            if isinstance(a, (list, tuple)):
+                return type(a)(convert_arg(item) for item in a)
+            return a
+
+        args = tuple(convert_arg(a) for a in args)
+        kwargs = {k: convert_arg(v) for k, v in kwargs.items()}
+        return func(*args, **kwargs)
 
     # this is a hack to allow this object to work with dask da.from_array
     # dask calls it during `compute_meta` ...
@@ -543,16 +566,17 @@ class LazyBioArray:
         if y_stop <= y_start or x_stop <= x_start:
             return
 
+        bf = self._biofile
         # Acquire lock once for entire batch read
-        with self._biofile._lock:
+        with bf._lock:
             # Set series and resolution once at start (not on every iteration)
-            reader = self._biofile._ensure_java_reader()
+            reader = bf._ensure_java_reader()
             reader.setSeries(self._series)
             reader.setResolution(self._resolution)
 
             # Get metadata once (avoid repeated lookups in hot loop)
-            meta = self._biofile.core_metadata(self._series, self._resolution)
-            read_plane = self._biofile._read_plane
+            meta = bf.core_metadata(self._series, self._resolution)
+            read_plane = bf._read_plane
 
             # Pre-compute specialized writer to avoid tuple building on each write
             write_plane = _make_plane_writer(output, *squeezed[:3])
@@ -565,6 +589,61 @@ class LazyBioArray:
                 if rgb_index is not None:
                     plane = plane[..., rgb_index]
                 write_plane(ti, ci, zi, plane)
+
+    def _build_coords(self) -> dict[str, Any]:
+        """Build coordinates (suitable for xarray).
+
+        Squeezed dimensions are returned as scalars, non-squeezed dimensions are
+        returned as ranges or sequences of values.
+        """
+        # build coords from bounds
+        coords: dict[str, Sequence[Any]] = {
+            dim: range(*bound.indices(size))
+            for dim, bound, size in zip(
+                "TCZYX",
+                self._bounds_tczyx,
+                self._meta.shape.as_array_shape,
+                strict=False,
+            )
+        }
+
+        if self._rgb_index is not None:
+            RGBA = ["R", "G", "B", "A"][: self._meta.shape.rgb]
+            coords["S"] = RGBA[self._rgb_index]
+
+        # Apply scene pixels metadata if possible
+        try:
+            pix = self._biofile.ome_metadata.images[self._series].pixels
+        except (IndexError, AttributeError):
+            pass
+        else:
+            # convert channel range to actual names
+            if pix.channels:
+                coords["C"] = [pix.channels[ci].name or f"C{ci}" for ci in coords["C"]]
+
+            planes = pix.planes
+            t_map = {p.the_t: p.delta_t for p in planes if p.the_t in coords["T"]}
+            if all(delta is not None for delta in t_map.values()):
+                # we have actual timestamps
+                coords["T"] = [t_map.get(t, 0) for t in coords["T"]]
+            elif pix.time_increment is not None:
+                # otherwise fall back to global time increment if available
+                coords["T"] = [t * float(pix.time_increment) for t in coords["T"]]
+
+            # Spatial coordinates - use physical sizes if available
+            if (pz := pix.physical_size_z) is not None:
+                coords["Z"] = np.asarray(coords["Z"]) * float(pz)  # type: ignore
+            if (py := pix.physical_size_y) is not None:
+                coords["Y"] = np.asarray(coords["Y"]) * float(py)  # type: ignore
+            if (px := pix.physical_size_x) is not None:
+                coords["X"] = np.asarray(coords["X"]) * float(px)  # type: ignore
+
+        # now squeeze any dimensions that are marked as squeezed into scalars
+        for dim, squeezed in zip("TCZYX", self._squeezed_tczyx, strict=False):
+            if squeezed and dim in coords:
+                coords[dim] = coords[dim][0]
+
+        return coords
 
 
 def _make_plane_writer(
