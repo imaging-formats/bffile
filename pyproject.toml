@@ -55,7 +55,7 @@ test-all = [
     "yaozarrs[io]>=0.2.2",
 ]
 dev = [
-    { include-group = "test" },
+    { include-group = "test-all" },
     "diff-cover>=10.2.0",
     "ipython>=8.18.1",
     "pdbpp>=0.11.6 ; sys_platform != 'win32'",
