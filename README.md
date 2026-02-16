@@ -15,7 +15,7 @@ Modern Bio-Formats wrapper for python
 ## Installation
 
 ```bash
-pip install git+https://github.com/imaging-formats/bffile
+pip install bffile
 ```
 
 ## Usage
