@@ -294,9 +294,7 @@ class LazyBioArray:
             new_rgb,
         )
 
-    def _bounds_to_selection(
-        self,
-    ) -> tuple[range, range, range, slice, slice]:
+    def _bounds_to_selection(self) -> tuple[range, range, range, slice, slice]:
         """Convert stored bounds to selection format for _fill_output."""
         t_slice, c_slice, z_slice, y_slice, x_slice = self._bounds_tczyx
         t_size, c_size, z_size, _y_size, _x_size = self._full_sizes_tczyx()
@@ -394,8 +392,7 @@ class LazyBioArray:
     def __array__(
         self, dtype: np.dtype | None = None, copy: bool | None = None
     ) -> np.ndarray:
-        """
-        Implement numpy array protocol - materializes data from disk.
+        """numpy array protocol - materializes data from disk.
 
         This enables `np.array(lazy_arr)` and other numpy operations.
 
@@ -419,7 +416,8 @@ class LazyBioArray:
         if dtype is not None and output.dtype != dtype:
             output = output.astype(dtype, copy=False)
 
-        # NumPy 2.0+ copy parameter - data is always fresh from disk so no copy needed
+        # data is always fresh from disk so no copy needed
+        # but honor explicit copy=True request
         if copy:
             output = output.copy()
 
@@ -428,12 +426,12 @@ class LazyBioArray:
     # this is a hack to allow this object to work with dask da.from_array
     # dask calls it during `compute_meta` ...
     # this should NOT be used for any other purpose, it does NOT do what it claims to do
+    # if we directly used dask.map_blocks again we could lose this...
     def astype(self, dtype: np.dtype) -> Any:
         return self
 
     def __getitem__(self, key: Any) -> LazyBioArray:
-        """
-        Index the array with numpy-style syntax, returning a lazy view.
+        """Index the array with numpy-style syntax, returning a lazy view.
 
         Supports integer and slice indexing. Returns a view without reading data -
         use np.asarray() or __array__() to materialize.
@@ -470,8 +468,7 @@ class LazyBioArray:
         )
 
     def _normalize_key(self, key: Any) -> tuple[slice | int, ...]:
-        """
-        Normalize indexing key to tuple of slices/ints.
+        """Normalize indexing key to tuple of slices/ints.
 
         Handles scalars, tuples, ellipsis expansion, and RGB dimension.
         """
@@ -525,10 +522,7 @@ class LazyBioArray:
         selection: tuple[range, range, range, slice, slice],
         squeezed: SqueezedTCZYX | list[bool],
     ) -> None:
-        """
-        Fill output array by reading planes from Bio-Formats.
-
-        Optimized to acquire lock once and reuse buffer across all reads.
+        """Fill output array by reading planes from Bio-Formats.
 
         Parameters
         ----------
@@ -547,7 +541,6 @@ class LazyBioArray:
         y_start, y_stop, _ = y_slice.indices(self._meta.shape.y)
         x_start, x_stop, _ = x_slice.indices(self._meta.shape.x)
         if y_stop <= y_start or x_stop <= x_start:
-            breakpoint()
             return
 
         # Acquire lock once for entire batch read
