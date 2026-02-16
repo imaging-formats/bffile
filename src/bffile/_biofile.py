@@ -173,33 +173,6 @@ class BioFile(Sequence[Series]):
         self._finalizer: weakref.finalize | None = None
         self._suspended: bool = False
 
-    def _ensure_java_reader(self) -> IFormatReader:
-        """Return the native reader, raising if not open."""
-        if self._java_reader is None:
-            raise RuntimeError("File not open - call open() first")
-        return self._java_reader
-
-    def _get_core_metadata(self, reader: IFormatReader) -> list[list[CoreMetadata]]:
-        """Parse flat CoreMetadata list into 2D structure.
-
-        Bio-Formats returns metadata as a flat list where entries are organized
-        as: [series0_res0, series0_res1, ..., series1_res0, series1_res1, ...].
-        The first entry of each series has resolution_count set to indicate how
-        many resolution levels that series has.
-        """
-        # Cache metadata in 2D structure: list[series][resolution]
-        # Bio-Formats returns a flat list where the first entry of each
-        # series has resolutionCount set. We parse this into 2D.
-        flat_list = [CoreMetadata.from_java(x) for x in reader.getCoreMetadataList()]
-
-        result: list[list[CoreMetadata]] = []
-        i = 0
-        while i < len(flat_list):
-            resolution_count = flat_list[i].resolution_count
-            result.append(flat_list[i : i + resolution_count])
-            i += resolution_count
-        return result
-
     def core_metadata(self, series: int = 0, resolution: int = 0) -> CoreMetadata:
         """Get metadata for specified series and resolution.
 
@@ -717,17 +690,6 @@ class BioFile(Sequence[Series]):
             return [self._get_series(i) for i in range(*index.indices(len(self)))]
         raise TypeError(f"Invalid index type: {type(index)}")  # pragma: no cover
 
-    def _get_series(self, index: int) -> Series:
-        """Internal method to get a Series with index validation."""
-        n = len(self)  # also validates open state
-        if index < 0:
-            index += n
-        if index < 0 or index >= n:
-            raise IndexError(f"Series index {index} out of range (file has {n} series)")
-        from bffile._series import Series
-
-        return Series(self, index)
-
     def used_files(self, *, metadata_only: bool = False) -> list[str]:
         """Return complete list of files needed to open this dataset.
 
@@ -875,6 +837,119 @@ class BioFile(Sequence[Series]):
             return buffer
 
         return im
+
+    # ========================== static methods ==========================
+
+    @staticmethod
+    def bioformats_version() -> str:
+        """Get the version of Bio-Formats."""
+        Version = jimport("loci.formats.FormatTools")
+        return str(getattr(Version, "VERSION", "unknown"))
+
+    @staticmethod
+    def bioformats_maven_coordinate() -> str:
+        """Return the Maven coordinate used to load Bio-Formats.
+
+        This was either provided via the `BIOFORMATS_VERSION` environment variable, or
+        is the default value, in format "groupId:artifactId:version",
+        See <https://mvnrepository.com/artifact/ome> for available versions.
+        """
+        from ._java_stuff import MAVEN_COORDINATE
+
+        return MAVEN_COORDINATE
+
+    @staticmethod
+    @cache
+    def list_supported_suffixes() -> set[str]:
+        """List all file suffixes supported by the available readers."""
+        reader = jimport("loci.formats.ImageReader")()
+        return {str(x) for x in reader.getSuffixes()}
+
+    @staticmethod
+    @cache
+    def list_available_readers() -> list[ReaderInfo]:
+        """List all available Bio-Formats readers.
+
+        Returns
+        -------
+        list[ReaderInfo]
+            Information about each available reader, including:
+
+            - format: human-readable format name (e.g., "Nikon ND2")
+            - suffixes: supported file extensions (e.g., ("nd2", "jp2"))
+            - class_name: full Java class name (e.g., "ND2Reader")
+            - is_gpl: whether this reader requires GPL license (True) or is BSD (False)
+        """
+        ImageReader = jimport("loci.formats.ImageReader")
+        temp_reader = ImageReader()
+        try:
+            formats = []
+            for reader in temp_reader.getReaders():
+                reader_cls = cast("java.lang.Class", reader.getClass())  # type: ignore
+                class_name = str(reader_cls.getName()).removeprefix("loci.formats.in.")
+
+                # Detect license from JAR file name
+                # GPL readers come from formats-gpl-X.X.X.jar
+                # BSD readers come from formats-bsd-X.X.X.jar
+                is_gpl = True
+                with suppress(Exception):
+                    protection_domain = reader_cls.getProtectionDomain()
+                    if (code_source := protection_domain.getCodeSource()) is not None:
+                        location = str(code_source.getLocation())
+                        is_gpl = "formats-gpl-" in location.split("/")[-1]
+
+                formats.append(
+                    ReaderInfo(
+                        format=str(reader.getFormat()),
+                        suffixes=tuple(str(s) for s in reader.getSuffixes()),
+                        class_name=class_name,
+                        is_gpl=is_gpl,
+                    )
+                )
+
+            return formats
+        finally:
+            temp_reader.close()
+
+    # ========================== Internal methods ==========================
+
+    def _ensure_java_reader(self) -> IFormatReader:
+        """Return the native reader, raising if not open."""
+        if self._java_reader is None:
+            raise RuntimeError("File not open - call open() first")
+        return self._java_reader
+
+    def _get_core_metadata(self, reader: IFormatReader) -> list[list[CoreMetadata]]:
+        """Parse flat CoreMetadata list into 2D structure.
+
+        Bio-Formats returns metadata as a flat list where entries are organized
+        as: [series0_res0, series0_res1, ..., series1_res0, series1_res1, ...].
+        The first entry of each series has resolution_count set to indicate how
+        many resolution levels that series has.
+        """
+        # Cache metadata in 2D structure: list[series][resolution]
+        # Bio-Formats returns a flat list where the first entry of each
+        # series has resolutionCount set. We parse this into 2D.
+        flat_list = [CoreMetadata.from_java(x) for x in reader.getCoreMetadataList()]
+
+        result: list[list[CoreMetadata]] = []
+        i = 0
+        while i < len(flat_list):
+            resolution_count = flat_list[i].resolution_count
+            result.append(flat_list[i : i + resolution_count])
+            i += resolution_count
+        return result
+
+    def _get_series(self, index: int) -> Series:
+        """Internal method to get a Series with index validation."""
+        n = len(self)  # also validates open state
+        if index < 0:
+            index += n
+        if index < 0 or index >= n:
+            raise IndexError(f"Series index {index} out of range (file has {n} series)")
+        from bffile._series import Series
+
+        return Series(self, index)
 
     def _read_plane(
         self,
@@ -1051,77 +1126,6 @@ class BioFile(Sequence[Series]):
             cls._service = factory.getInstance(OMEXMLService)
 
         return cls._service.createOMEXMLMetadata()
-
-    @staticmethod
-    def bioformats_version() -> str:
-        """Get the version of Bio-Formats."""
-        Version = jimport("loci.formats.FormatTools")
-        return str(getattr(Version, "VERSION", "unknown"))
-
-    @staticmethod
-    def bioformats_maven_coordinate() -> str:
-        """Return the Maven coordinate used to load Bio-Formats.
-
-        This was either provided via the `BIOFORMATS_VERSION` environment variable, or
-        is the default value, in format "groupId:artifactId:version",
-        See <https://mvnrepository.com/artifact/ome> for available versions.
-        """
-        from ._java_stuff import MAVEN_COORDINATE
-
-        return MAVEN_COORDINATE
-
-    @staticmethod
-    @cache
-    def list_supported_suffixes() -> set[str]:
-        """List all file suffixes supported by the available readers."""
-        reader = jimport("loci.formats.ImageReader")()
-        return {str(x) for x in reader.getSuffixes()}
-
-    @staticmethod
-    @cache
-    def list_available_readers() -> list[ReaderInfo]:
-        """List all available Bio-Formats readers.
-
-        Returns
-        -------
-        list[ReaderInfo]
-            Information about each available reader, including:
-
-            - format: human-readable format name (e.g., "Nikon ND2")
-            - suffixes: supported file extensions (e.g., ("nd2", "jp2"))
-            - class_name: full Java class name (e.g., "ND2Reader")
-            - is_gpl: whether this reader requires GPL license (True) or is BSD (False)
-        """
-        ImageReader = jimport("loci.formats.ImageReader")
-        temp_reader = ImageReader()
-        try:
-            formats = []
-            for reader in temp_reader.getReaders():
-                reader_cls = cast("java.lang.Class", reader.getClass())  # type: ignore
-                class_name = str(reader_cls.getName()).removeprefix("loci.formats.in.")
-
-                # Detect license from JAR file name
-                # GPL readers come from formats-gpl-X.X.X.jar
-                # BSD readers come from formats-bsd-X.X.X.jar
-                is_gpl = True
-                with suppress(Exception):
-                    protection_domain = reader_cls.getProtectionDomain()
-                    if (code_source := protection_domain.getCodeSource()) is not None:
-                        location = str(code_source.getLocation())
-                        is_gpl = "formats-gpl-" in location.split("/")[-1]
-
-                formats.append(
-                    ReaderInfo(
-                        format=str(reader.getFormat()),
-                        suffixes=tuple(str(s) for s in reader.getSuffixes()),
-                        class_name=class_name,
-                        is_gpl=is_gpl,
-                    )
-                )
-
-            return formats
-        finally:
-            temp_reader.close()
 
 
 def _close_java_reader(java_reader: IFormatReader | None) -> None:
