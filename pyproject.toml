@@ -35,7 +35,7 @@ classifiers = [
 dependencies = [
     "numpy>=2.1.0",
     "ome-types[pint,lxml]>=0.6.3",
-    "scyjava>=1.12.2"
+    "scyjava>=1.12.2",
 ]
 
 [project.urls]
@@ -48,11 +48,10 @@ zarr = ["zarr>=3.1.0; python_version>='3.11'"]
 xarray = ["xarray>=2024.1.0"]
 
 [dependency-groups]
-test = [
+test = ["pytest>=8.3.5", "pytest-cov>=6.1.1", "requests>=2.32.3"]
+test-all = [
+    { include-group = "test" },
     "bffile[dask,zarr,xarray]",
-    "pytest>=8.3.5",
-    "pytest-cov>=6.1.1",
-    "requests>=2.32.3",
     "yaozarrs[io]>=0.2.2",
 ]
 dev = [

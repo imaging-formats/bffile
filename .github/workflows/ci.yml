@@ -37,6 +37,7 @@ jobs:
         java-version: ["11"]
         bioformats-version: [""]
         resolution: ["highest"]
+        group: [test-all] # this means install all third party deps.  The other includes do not.
         exclude:
           # this one always seems to hang on CI for some reason.
           - os: ubuntu-latest
@@ -63,6 +64,11 @@ jobs:
             python-version: "3.11"
             java-version: "11"
             resolution: "lowest-direct"
+          - os: ubuntu-latest
+            python-version: "3.12"
+            java-version: "11"
+            resolution: "lowest-direct"
+            group: test-all
           - os: windows-latest
             python-version: "3.13"
             java-version: "21"
@@ -75,7 +81,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install Dependencies
-        run: uv sync --group test
+        run: uv sync --group ${{ matrix.group == '' && 'test' || matrix.group }}
         env:
           UV_NO_DEV: 1
           UV_RESOLUTION: ${{ matrix.resolution || 'highest' }}
@@ -109,7 +115,7 @@ jobs:
       - name: Upload coverage
         uses: actions/upload-artifact@v6
         with:
-          name: covreport-${{ matrix.os }}-py${{ matrix.python-version }}-${{ matrix.bioformats-version }}-${{ matrix.java-version }}-${{ matrix.resolution }}
+          name: covreport-${{ matrix.os }}-py${{ matrix.python-version }}-${{ matrix.bioformats-version }}-${{ matrix.java-version }}-${{ matrix.resolution }}-${{ matrix.group}}
           path: ./.coverage*
           include-hidden-files: true
 

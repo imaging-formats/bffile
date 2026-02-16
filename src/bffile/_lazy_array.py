@@ -6,7 +6,6 @@ import math
 from itertools import product
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-import dask
 import numpy as np
 
 from bffile._utils import get_dask_tile_chunks

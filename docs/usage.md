@@ -312,7 +312,7 @@ with BioFile("image.nd2") as bf:
     result = darr.mean(axis=2).compute()  # lazy z-projection
 ```
 
-You don't gain any *additional* data reading "laziness" here.  But you can use
+You don't gain any _additional_ data reading "laziness" here.  But you can use
 dask's rich ecosystem of chunked, parallelized computations and out-of-core
 algorithms on top of the lazy reading provided by `LazyBioArray`.
 
@@ -323,8 +323,9 @@ algorithms on top of the lazy reading provided by `LazyBioArray`.
 You can also use tile-based chunking for very large planes:
 
 ```python
-darr = bf.to_dask(tile_size=(512, 512))       # explicit tile size
-darr = bf.to_dask(tile_size="auto")           # query Bio-Formats for optimal size
+with BioFile("image.nd2") as bf:
+    darr = bf.to_dask(tile_size=(512, 512))       # explicit tile size
+    darr = bf.to_dask(tile_size="auto")           # query Bio-Formats for optimal size
 ```
 
 !!! note "Dask is optional"
