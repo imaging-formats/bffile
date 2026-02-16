@@ -356,7 +356,8 @@ def test_rgb_index_composition_uses_parent_bounds(rgb_file: Path) -> None:
         assert composed.ndim == 2
 
         assert isinstance(composed, LazyBioArray)
-        assert composed._rgb_index == 1
+        assert composed._bounds_tczyxs[5] == slice(1, 2)
+        assert composed._squeezed_tczyxs[5]
 
         materialized = np.asarray(composed)
         expected = np.asarray(arr[0, 0, 0, :, :, 1])

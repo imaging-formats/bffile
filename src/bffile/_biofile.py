@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
     import dask.array
     import java.lang
+    import xarray as xr
     from loci.formats import IFormatReader
     from typing_extensions import Self
 
@@ -627,6 +628,28 @@ class BioFile(Sequence[Series]):
 
         lazy_arr = self.as_array(series=series, resolution=resolution)
         return da.from_array(lazy_arr, chunks=chunks)  # type: ignore
+
+    def as_xarray(
+        self,
+        series: int = 0,
+        resolution: int = 0,
+    ) -> xr.DataArray:
+        """Create xarray.DataArray with OME metadata as coordinates."""
+        try:
+            import xarray as xr
+        except ImportError as e:
+            raise ImportError(
+                "xarray is required for as_xarray(). "
+                "Install with `pip install bffile[xarray]`"
+            ) from e
+
+        arr = self.as_array(series=series, resolution=resolution)
+        return xr.DataArray(
+            arr,
+            dims=arr.dims,
+            coords=arr.coords,
+            attrs={"ome_metadata": self.ome_metadata},
+        )
 
     @property
     def closed(self) -> bool:

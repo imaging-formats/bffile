@@ -97,14 +97,13 @@ def main() -> None:
         bf = BioFile(args.file_path).open()
         meta = bf.core_metadata(series=args.series)
         method = bf.to_dask if args.dask else bf.as_array
-        scale = None
-        if args.res or meta.resolution_count == 1:
+        res_count = meta.resolution_count
+        if args.res or res_count <= 1:
             data = method(series=args.series, resolution=args.res or 0)
-            scale = [1] * (data.ndim - 1)
-        elif meta.resolution_count > 1:
+            scale: list[float] = [1] * (data.ndim - 1)
+        else:
             data = [
-                method(series=args.series, resolution=res)
-                for res in range(meta.resolution_count)
+                method(series=args.series, resolution=res) for res in range(res_count)
             ]
             scale = [1] * (data[0].ndim - 1)
 
