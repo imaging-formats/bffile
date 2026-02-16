@@ -646,8 +646,8 @@ class BioFile(Sequence[Series]):
         arr = self.as_array(series=series, resolution=resolution)
         return xr.DataArray(
             arr,
-            dims=arr.dimension_names(),
-            coords=arr._build_coords(),
+            dims=arr.dims,
+            coords=arr.coords,
             attrs={"ome_metadata": self.ome_metadata},
         )
 

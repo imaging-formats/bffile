@@ -4,20 +4,20 @@ from __future__ import annotations
 
 import math
 from itertools import product
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     from bffile._biofile import BioFile
     from bffile._zarr import BFArrayStore
 
 
-BoundsTCZYX: TypeAlias = tuple[slice, slice, slice, slice, slice]
-SqueezedTCZYX: TypeAlias = tuple[bool, bool, bool, bool, bool]
-RGBIndex: TypeAlias = slice | int | None
+BoundsTCZYXS: TypeAlias = tuple[slice, slice, slice, slice, slice, slice]
+SqueezedTCZYXS: TypeAlias = tuple[bool, bool, bool, bool, bool, bool]
+ShapeTCZYXS: TypeAlias = tuple[int, int, int, int, int, int]
 
 
 class LazyBioArray:
@@ -87,14 +87,14 @@ class LazyBioArray:
 
     __slots__ = (
         "_biofile",
-        "_bounds_tczyx",
+        "_bounds_tczyxs",
         "_dtype",
+        "_full_shape_tczyxs",
         "_meta",
         "_resolution",
-        "_rgb_index",
         "_series",
         "_shape",
-        "_squeezed_tczyx",
+        "_squeezed_tczyxs",
     )
 
     def __init__(self, biofile: BioFile, series: int, resolution: int = 0) -> None:
@@ -117,206 +117,14 @@ class LazyBioArray:
         # Get metadata directly from the 2D list (stateless!)
         # This avoids hidden dependency on biofile's current state
         self._meta = meta = biofile.core_metadata(series, resolution)
-
-        # Follow same logic as to_numpy(): only include RGB dimension if > 1
-        self._shape = meta.shape.as_array_shape
         self._dtype = meta.dtype
+        self._full_shape_tczyxs = full = cast("ShapeTCZYXS", tuple(self._meta.shape))
 
         # View state tracking (for lazy slicing)
         # Initialize to full range (root array shows entire dataset)
-        self._bounds_tczyx = (
-            slice(0, meta.shape.t),
-            slice(0, meta.shape.c),
-            slice(0, meta.shape.z),
-            slice(0, meta.shape.y),
-            slice(0, meta.shape.x),
-        )
-        self._squeezed_tczyx = (False, False, False, False, False)
-        self._rgb_index = slice(None) if meta.shape.rgb > 1 else None
-
-    def dimension_names(self) -> tuple[str, ...]:
-        """Return dimension names (matches shape)."""
-        names = [
-            dim
-            for dim, squeezed in zip("TCZYX", self._squeezed_tczyx, strict=False)
-            if not squeezed
-        ]
-        if self._rgb_index is not None:
-            names.append("S")
-        return tuple(names)
-
-    @classmethod
-    def _create_view(
-        cls,
-        parent: LazyBioArray,
-        bounds_tczyx: BoundsTCZYX,
-        squeezed_tczyx: SqueezedTCZYX,
-        rgb_index: RGBIndex,
-    ) -> LazyBioArray:
-        """Create a view of a parent array without reading data."""
-        view = cls.__new__(cls)
-        view._biofile = parent._biofile
-        view._series = parent._series
-        view._resolution = parent._resolution
-        view._meta = parent._meta
-        view._dtype = parent._dtype
-        view._bounds_tczyx = bounds_tczyx
-        view._squeezed_tczyx = squeezed_tczyx
-        view._rgb_index = rgb_index
-        # Compute effective shape from bounds
-        view._shape = view._compute_effective_shape()
-        return view
-
-    def _full_sizes_tczyx(self) -> tuple[int, int, int, int, int]:
-        """Return full TCZYX sizes from metadata."""
-        return (
-            self._meta.shape.t,
-            self._meta.shape.c,
-            self._meta.shape.z,
-            self._meta.shape.y,
-            self._meta.shape.x,
-        )
-
-    def _compute_effective_shape(self) -> tuple[int, ...]:
-        """Compute visible shape from bounds, excluding squeezed dimensions."""
-        shape = []
-        full_sizes = self._full_sizes_tczyx()
-
-        # Add non-squeezed TCZYX dimensions
-        for dim_idx in range(5):
-            if not self._squeezed_tczyx[dim_idx]:
-                bound = self._bounds_tczyx[dim_idx]
-                full_size = full_sizes[dim_idx]
-                start, stop, _ = bound.indices(full_size)
-                shape.append(stop - start)
-
-        # Handle RGB dimension
-        if isinstance(self._rgb_index, slice):
-            rgb_start, rgb_stop, _ = self._rgb_index.indices(self._meta.shape.rgb)
-            shape.append(rgb_stop - rgb_start)
-
-        return tuple(shape)
-
-    def _split_key(
-        self, key: tuple[slice | int, ...]
-    ) -> tuple[tuple[slice | int, ...], slice | int | None]:
-        """Split normalized key into TCZYX and RGB parts."""
-        # Determine how many effective dimensions we have
-        n_effective = sum(not s for s in self._squeezed_tczyx)
-        has_rgb = self._rgb_index is not None and not isinstance(self._rgb_index, int)
-
-        if has_rgb:
-            # Last dimension is RGB if present
-            if len(key) > n_effective:
-                return key[:n_effective], key[n_effective]
-            return key, slice(None)
-        else:
-            # No RGB dimension
-            return key, None
-
-    def _compose_index(
-        self, user_idx: int | slice, parent_bound: slice, full_size: int
-    ) -> tuple[slice, bool]:
-        """Compose user index with parent bound, return (new_bound, squeezed)."""
-        # Get parent's effective range
-        p_start, p_stop, _ = parent_bound.indices(full_size)
-        p_size = p_stop - p_start
-
-        if isinstance(user_idx, int):
-            # Resolve negative indices relative to effective size
-            idx = user_idx if user_idx >= 0 else p_size + user_idx
-            if idx < 0 or idx >= p_size:
-                msg = f"index {user_idx} is out of bounds for size {p_size}"
-                raise IndexError(msg)
-            # Map to absolute position
-            abs_idx = p_start + idx
-            return slice(abs_idx, abs_idx + 1), True
-
-        else:  # slice
-            # Get effective range within parent
-            start, stop, step = user_idx.indices(p_size)
-            if step != 1:
-                msg = f"step != 1 is not supported (got step={step})"
-                raise NotImplementedError(msg)
-            # Map to absolute positions
-            abs_start = p_start + start
-            abs_stop = p_start + stop
-            return slice(abs_start, abs_stop), False
-
-    def _map_user_index_to_tczyx(
-        self, key: tuple[slice | int, ...]
-    ) -> tuple[BoundsTCZYX, SqueezedTCZYX, RGBIndex]:
-        """Map user's effective-space index to original TCZYX coordinates."""
-        tczyx_key, rgb_key = self._split_key(key)
-
-        # Build mapping from effective dimension index to TCZYX dimension
-        effective_to_tczyx = []
-        for dim_idx in range(5):
-            if not self._squeezed_tczyx[dim_idx]:
-                effective_to_tczyx.append(dim_idx)
-
-        # Compose each user index with parent bounds
-        new_bounds: list[slice] = list(self._bounds_tczyx)
-        new_squeezed: list[bool] = list(self._squeezed_tczyx)
-        full_sizes = self._full_sizes_tczyx()
-
-        for eff_idx, user_idx in enumerate(tczyx_key):
-            tczyx_idx = effective_to_tczyx[eff_idx]
-            parent_bound = self._bounds_tczyx[tczyx_idx]
-            full_size = full_sizes[tczyx_idx]
-
-            new_bound, squeezed = self._compose_index(user_idx, parent_bound, full_size)
-            new_bounds[tczyx_idx] = new_bound
-            # Only mark as squeezed if parent wasn't already squeezed
-            # AND this operation squeezes it
-            new_squeezed[tczyx_idx] = self._squeezed_tczyx[tczyx_idx] or squeezed
-
-        # Handle RGB
-        new_rgb = self._rgb_index
-        if rgb_key is not None and self._rgb_index is not None:
-            rgb_size = self._meta.shape.rgb
-            if isinstance(self._rgb_index, slice):
-                p_start, p_stop, _ = self._rgb_index.indices(rgb_size)
-                p_size = p_stop - p_start
-
-                if isinstance(rgb_key, int):
-                    idx = rgb_key if rgb_key >= 0 else p_size + rgb_key
-                    if idx < 0 or idx >= p_size:
-                        msg = f"RGB index {rgb_key} is out of bounds"
-                        raise IndexError(msg)
-                    new_rgb = p_start + idx
-                else:
-                    start, stop, step = rgb_key.indices(p_size)
-                    if step != 1:
-                        msg = f"step != 1 is not supported (got step={step})"
-                        raise NotImplementedError(msg)
-                    new_rgb = slice(p_start + start, p_start + stop)
-            elif isinstance(self._rgb_index, int):
-                msg = "RGB dimension is already squeezed"
-                raise IndexError(msg)
-
-        return (
-            tuple(new_bounds),  # type: ignore[return-value]
-            tuple(new_squeezed),  # type: ignore[return-value]
-            new_rgb,
-        )
-
-    def _bounds_to_selection(self) -> tuple[range, range, range, slice, slice]:
-        """Convert stored bounds to selection format for _fill_output."""
-        t_slice, c_slice, z_slice, y_slice, x_slice = self._bounds_tczyx
-        t_size, c_size, z_size, _y_size, _x_size = self._full_sizes_tczyx()
-
-        # Convert slices to ranges for TCZ iteration
-        t_start, t_stop, _ = t_slice.indices(t_size)
-        c_start, c_stop, _ = c_slice.indices(c_size)
-        z_start, z_stop, _ = z_slice.indices(z_size)
-
-        t_range = range(t_start, t_stop)
-        c_range = range(c_start, c_stop)
-        z_range = range(z_start, z_stop)
-
-        # Y and X stay as slices
-        return t_range, c_range, z_range, y_slice, x_slice
+        self._bounds_tczyxs = tuple(slice(0, x) for x in full)
+        self._squeezed_tczyxs = (False, False, False, False, False, meta.shape.rgb <= 1)
+        self._shape = self._compute_effective_shape()
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -346,7 +154,77 @@ class LazyBioArray:
     @property
     def is_rgb(self) -> bool:
         """True if image has RGB/RGBA components (ndim == 6)."""
-        return self.ndim == 6
+        return self._meta.is_rgb and not self._squeezed_tczyxs[5]
+
+    @property
+    def dims(self) -> tuple[str, ...]:
+        """Return used dimension names (matches shape)."""
+        return tuple(
+            dim
+            for dim, squeezed in zip("TCZYXS", self._squeezed_tczyxs, strict=False)
+            if not squeezed
+        )
+
+    @property
+    def coords(self) -> Mapping[str, Any]:
+        """Mapping of dimension names to coordinate values for this view.
+
+        Squeezed dimensions are returned as scalars, non-squeezed dimensions are
+        returned as ranges or sequences of values.
+
+        This mimics the .coords attribute of xarray.DataArray for compatibility
+        with xarray's indexing
+        """
+        # build coords from bounds
+        coords: dict[str, Sequence[Any]] = {
+            dim: range(*bound.indices(size))
+            for dim, bound, size in zip(
+                "TCZYXS",
+                self._bounds_tczyxs,
+                self._full_shape_tczyxs,
+                strict=False,
+            )
+        }
+
+        if self._meta.shape.rgb > 1:
+            rgba = ["R", "G", "B", "A"]
+            coords["S"] = [rgba[i] if i < len(rgba) else f"S{i}" for i in coords["S"]]
+        else:
+            coords.pop("S", None)
+
+        # Apply scene pixels metadata if possible
+        try:
+            pix = self._biofile.ome_metadata.images[self._series].pixels
+        except (IndexError, AttributeError):
+            pass
+        else:
+            # convert channel range to actual names
+            if pix.channels:
+                coords["C"] = [pix.channels[ci].name or f"C{ci}" for ci in coords["C"]]
+
+            planes = pix.planes
+            t_map = {p.the_t: p.delta_t for p in planes if p.the_t in coords["T"]}
+            if all(delta is not None for delta in t_map.values()):
+                # we have actual timestamps
+                coords["T"] = [t_map.get(t, 0) for t in coords["T"]]
+            elif pix.time_increment is not None:
+                # otherwise fall back to global time increment if available
+                coords["T"] = [t * float(pix.time_increment) for t in coords["T"]]
+
+            # Spatial coordinates - use physical sizes if available
+            if (pz := pix.physical_size_z) is not None:
+                coords["Z"] = np.asarray(coords["Z"]) * float(pz)  # type: ignore
+            if (py := pix.physical_size_y) is not None:
+                coords["Y"] = np.asarray(coords["Y"]) * float(py)  # type: ignore
+            if (px := pix.physical_size_x) is not None:
+                coords["X"] = np.asarray(coords["X"]) * float(px)  # type: ignore
+
+        # now squeeze any dimensions that are marked as squeezed into scalars
+        for dim, squeezed in zip("TCZYXS", self._squeezed_tczyxs, strict=False):
+            if squeezed and dim in coords:
+                coords[dim] = coords[dim][0]
+
+        return coords
 
     def zarr_store(
         self,
@@ -396,6 +274,41 @@ class LazyBioArray:
             f"file='{self._biofile.filename}')"
         )
 
+    def __getitem__(self, key: Any) -> LazyBioArray:
+        """Index the array with numpy-style syntax, returning a lazy view.
+
+        Supports integer and slice indexing. Returns a view without reading data -
+        use np.asarray() or __array__() to materialize.
+
+        Parameters
+        ----------
+        key : int, slice, tuple, or Ellipsis
+            Index specification
+
+        Returns
+        -------
+        LazyBioArray
+            A lazy view of the requested data
+
+        Raises
+        ------
+        NotImplementedError
+            If fancy indexing, boolean indexing, or step != 1 is used
+        IndexError
+            If indices are out of bounds
+        """
+        # Map user's effective-space index to original TCZYXS coordinates
+        key = self._normalize_key(key)
+        new_bounds, new_squeezed = self._map_user_index_to_tczyxs(key)
+
+        return LazyBioArray._create_view(
+            parent=self,
+            bounds_tczyxs=new_bounds,
+            squeezed_tczyxs=new_squeezed,
+        )
+
+    # ============================ Numpy array protocol ===========================
+
     def __array__(
         self, dtype: np.dtype | None = None, copy: bool | None = None
     ) -> np.ndarray:
@@ -410,15 +323,9 @@ class LazyBioArray:
         copy : bool, optional
             Whether to force a copy (NumPy 2.0+ compatibility)
         """
-        # Convert stored bounds to selection format
-        selection = self._bounds_to_selection()
-
-        # Allocate output with effective shape
         output = np.empty(self._shape, dtype=self._dtype)
-        # Fill using existing optimized _fill_output (preserves locking!)
-        self._fill_output(output, selection, self._squeezed_tczyx)
-
-        # Handle dtype conversion if needed
+        selection = self._bounds_to_selection()
+        self._fill_output(output, selection, self._squeezed_tczyxs)
         if dtype is not None and output.dtype != dtype:
             output = output.astype(dtype, copy=False)
 
@@ -453,47 +360,89 @@ class LazyBioArray:
     def astype(self, dtype: np.dtype) -> Any:
         return self
 
-    def __getitem__(self, key: Any) -> LazyBioArray:
-        """Index the array with numpy-style syntax, returning a lazy view.
+    # ============================= Private methods =============================
 
-        Supports integer and slice indexing. Returns a view without reading data -
-        use np.asarray() or __array__() to materialize.
+    @classmethod
+    def _create_view(
+        cls,
+        parent: LazyBioArray,
+        bounds_tczyxs: BoundsTCZYXS,
+        squeezed_tczyxs: SqueezedTCZYXS,
+    ) -> LazyBioArray:
+        """Create a view of a parent array without reading data."""
+        view = cls.__new__(cls)
+        view._meta = meta = parent._meta
+        view._biofile = parent._biofile
+        view._series = parent._series
+        view._resolution = parent._resolution
+        view._full_shape_tczyxs = cast("ShapeTCZYXS", tuple(meta.shape))
+        view._dtype = meta.dtype
+        view._bounds_tczyxs = bounds_tczyxs
+        view._squeezed_tczyxs = squeezed_tczyxs
+        view._shape = view._compute_effective_shape()
+        return view
 
-        Parameters
-        ----------
-        key : int, slice, tuple, or Ellipsis
-            Index specification
+    def _compute_effective_shape(self) -> tuple[int, ...]:
+        """Compute visible shape from bounds, excluding squeezed dimensions."""
+        shape = []
+        for size, bound, squeezed in zip(
+            self._full_shape_tczyxs,
+            self._bounds_tczyxs,
+            self._squeezed_tczyxs,
+            strict=True,
+        ):
+            if not squeezed:
+                start, stop, _ = bound.indices(size)
+                shape.append(stop - start)
+        return tuple(shape)
 
-        Returns
-        -------
-        LazyBioArray
-            A lazy view of the requested data
+    def _map_user_index_to_tczyxs(
+        self, key: tuple[slice | int, ...]
+    ) -> tuple[BoundsTCZYXS, SqueezedTCZYXS]:
+        new_bounds = list(self._bounds_tczyxs)
+        new_squeezed = list(self._squeezed_tczyxs)
+        key_iter = iter(key)
 
-        Raises
-        ------
-        NotImplementedError
-            If fancy indexing, boolean indexing, or step != 1 is used
-        IndexError
-            If indices are out of bounds
+        for dim_idx, (bound, size, squeezed_now) in enumerate(
+            zip(
+                self._bounds_tczyxs,
+                self._full_shape_tczyxs,
+                self._squeezed_tczyxs,
+                strict=True,
+            )
+        ):
+            if squeezed_now:
+                continue
+            new_bound, squeezed = _compose_index(next(key_iter), bound, size)
+            new_bounds[dim_idx] = new_bound
+            new_squeezed[dim_idx] = squeezed
+
+        return tuple(new_bounds), tuple(new_squeezed)  # type: ignore[return-value]
+
+    def _bounds_to_selection(self) -> tuple[range, range, range, slice, slice, slice]:
+        """Convert stored bounds to selection format for _fill_output.
+
+        Returns (t_range, c_range, z_range, y_slice, x_slice, s_slice).
         """
-        # Normalize key to tuple
-        key = self._normalize_key(key)
+        t_slice, c_slice, z_slice, y_slice, x_slice, s_slice = self._bounds_tczyxs
+        t_size, c_size, z_size, *_ = self._full_shape_tczyxs
 
-        # Map user's effective-space index to original TCZYX coordinates
-        new_bounds, new_squeezed, new_rgb = self._map_user_index_to_tczyx(key)
+        # Convert slices to ranges for TCZ iteration
+        t_start, t_stop, _ = t_slice.indices(t_size)
+        c_start, c_stop, _ = c_slice.indices(c_size)
+        z_start, z_stop, _ = z_slice.indices(z_size)
 
-        # Create new view (no data read!)
-        return LazyBioArray._create_view(
-            parent=self,
-            bounds_tczyx=new_bounds,
-            squeezed_tczyx=new_squeezed,
-            rgb_index=new_rgb,
-        )
+        t_range = range(t_start, t_stop)
+        c_range = range(c_start, c_stop)
+        z_range = range(z_start, z_stop)
+
+        # Y, X, and S stay as slices
+        return t_range, c_range, z_range, y_slice, x_slice, s_slice
 
     def _normalize_key(self, key: Any) -> tuple[slice | int, ...]:
         """Normalize indexing key to tuple of slices/ints.
 
-        Handles scalars, tuples, ellipsis expansion, and RGB dimension.
+        Handles scalars, tuples, and ellipsis expansion.
         """
         # Convert scalar to tuple
         if not isinstance(key, tuple):
@@ -542,8 +491,8 @@ class LazyBioArray:
     def _fill_output(
         self,
         output: np.ndarray,
-        selection: tuple[range, range, range, slice, slice],
-        squeezed: SqueezedTCZYX | list[bool],
+        selection: tuple[range, range, range, slice, slice, slice],
+        squeezed: SqueezedTCZYXS | list[bool],
     ) -> None:
         """Fill output array by reading planes from Bio-Formats.
 
@@ -552,11 +501,11 @@ class LazyBioArray:
         output : np.ndarray
             Pre-allocated output array to fill
         selection : tuple
-            (t_range, c_range, z_range, y_slice, x_slice)
+            (t_range, c_range, z_range, y_slice, x_slice, s_slice)
         squeezed : list[bool]
-            Which TCZYX dimensions are squeezed (True = squeezed)
+            Which TCZYXS dimensions are squeezed (True = squeezed)
         """
-        t_range, c_range, z_range, y_slice, x_slice = selection
+        t_range, c_range, z_range, y_slice, x_slice, s_slice = selection
 
         # Check if any dimension is empty (no data to read)
         if len(t_range) == 0 or len(c_range) == 0 or len(z_range) == 0:
@@ -573,77 +522,29 @@ class LazyBioArray:
             reader = bf._ensure_java_reader()
             reader.setSeries(self._series)
             reader.setResolution(self._resolution)
-
-            # Get metadata once (avoid repeated lookups in hot loop)
-            meta = bf.core_metadata(self._series, self._resolution)
+            meta = self._meta
             read_plane = bf._read_plane
 
             # Pre-compute specialized writer to avoid tuple building on each write
             write_plane = _make_plane_writer(output, *squeezed[:3])
 
-            rgb_index = self._rgb_index
+            s_index: int | slice | None = None
+            if self._meta.shape.rgb > 1:
+                if squeezed[5]:
+                    s_start, _s_stop, _ = s_slice.indices(self._meta.shape.rgb)
+                    s_index = s_start
+                else:
+                    s_index = s_slice
+
             for (ti, t), (ci, c), (zi, z) in product(
-                enumerate(t_range), enumerate(c_range), enumerate(z_range)
+                enumerate(t_range),
+                enumerate(c_range),
+                enumerate(z_range),
             ):
                 plane = read_plane(reader, meta, t, c, z, y_slice, x_slice)
-                if rgb_index is not None:
-                    plane = plane[..., rgb_index]
+                if s_index is not None:
+                    plane = plane[..., s_index]
                 write_plane(ti, ci, zi, plane)
-
-    def _build_coords(self) -> dict[str, Any]:
-        """Build coordinates (suitable for xarray).
-
-        Squeezed dimensions are returned as scalars, non-squeezed dimensions are
-        returned as ranges or sequences of values.
-        """
-        # build coords from bounds
-        coords: dict[str, Sequence[Any]] = {
-            dim: range(*bound.indices(size))
-            for dim, bound, size in zip(
-                "TCZYX",
-                self._bounds_tczyx,
-                self._meta.shape.as_array_shape,
-                strict=False,
-            )
-        }
-
-        if self._rgb_index is not None:
-            RGBA = ["R", "G", "B", "A"][: self._meta.shape.rgb]
-            coords["S"] = RGBA[self._rgb_index]
-
-        # Apply scene pixels metadata if possible
-        try:
-            pix = self._biofile.ome_metadata.images[self._series].pixels
-        except (IndexError, AttributeError):
-            pass
-        else:
-            # convert channel range to actual names
-            if pix.channels:
-                coords["C"] = [pix.channels[ci].name or f"C{ci}" for ci in coords["C"]]
-
-            planes = pix.planes
-            t_map = {p.the_t: p.delta_t for p in planes if p.the_t in coords["T"]}
-            if all(delta is not None for delta in t_map.values()):
-                # we have actual timestamps
-                coords["T"] = [t_map.get(t, 0) for t in coords["T"]]
-            elif pix.time_increment is not None:
-                # otherwise fall back to global time increment if available
-                coords["T"] = [t * float(pix.time_increment) for t in coords["T"]]
-
-            # Spatial coordinates - use physical sizes if available
-            if (pz := pix.physical_size_z) is not None:
-                coords["Z"] = np.asarray(coords["Z"]) * float(pz)  # type: ignore
-            if (py := pix.physical_size_y) is not None:
-                coords["Y"] = np.asarray(coords["Y"]) * float(py)  # type: ignore
-            if (px := pix.physical_size_x) is not None:
-                coords["X"] = np.asarray(coords["X"]) * float(px)  # type: ignore
-
-        # now squeeze any dimensions that are marked as squeezed into scalars
-        for dim, squeezed in zip("TCZYX", self._squeezed_tczyx, strict=False):
-            if squeezed and dim in coords:
-                coords[dim] = coords[dim][0]
-
-        return coords
 
 
 def _make_plane_writer(
@@ -666,3 +567,34 @@ def _make_plane_writer(
             return lambda t, c, z, plane: output.__setitem__((z,), plane)
         case (True, True, True):
             return lambda t, c, z, plane: output.__setitem__(slice(None), plane)
+
+
+def _compose_index(
+    user_idx: int | slice, parent_bound: slice, full_size: int
+) -> tuple[slice, bool]:
+    """Compose user index with parent bound, return (new_bound, squeezed).
+
+    Examples
+    --------
+    >>> _compose_index(slice(2, 5), slice(10, 20), 100)
+    (slice(12, 15, None), False)
+
+    >>> _compose_index(3, slice(10, 20), 100)
+    (slice(13, 14, None), True)
+    """
+    p_start, p_stop, _ = parent_bound.indices(full_size)
+    p_size = p_stop - p_start
+
+    if isinstance(user_idx, int):
+        idx = user_idx if user_idx >= 0 else p_size + user_idx
+        if not 0 <= idx < p_size:
+            msg = f"index {user_idx} is out of bounds for size {p_size}"
+            raise IndexError(msg)
+        abs_idx = p_start + idx
+        return slice(abs_idx, abs_idx + 1), True
+
+    start, stop, step = user_idx.indices(p_size)
+    if step != 1:
+        msg = f"step != 1 is not supported (got step={step})"
+        raise NotImplementedError(msg)
+    return slice(p_start + start, p_start + stop), False

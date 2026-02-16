@@ -20,7 +20,7 @@ def test_as_xarray_basic(opened_biofile: BioFile) -> None:
     # ensure the underlying data is still a LazyBioArray
     assert isinstance(xarr, xarray.DataArray)
     assert isinstance(xarr.variable._data, LazyBioArray)
-    assert tuple(xarr.dims) == lzarr.dimension_names()
+    assert tuple(xarr.dims) == lzarr.dims
     assert xarr.shape == lzarr.shape
     assert "ome_metadata" in xarr.attrs
     assert set(xarr.coords).issubset({"T", "C", "Z", "Y", "X", "S"})
