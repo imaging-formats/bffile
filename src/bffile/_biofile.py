@@ -973,23 +973,16 @@ class BioFile(Sequence[Series]):
             if z is None:
                 z = meta.shape.z // 2  # Default to central Z slice if not specified
             idx = reader.getIndex(z, c, t)
-            java_buffer = reader.openThumbBytes(idx)
-
-            thumb = np.frombuffer(memoryview(java_buffer), meta.dtype).copy()  # type: ignore
-            thumb_height = reader.getThumbSizeY()
-            thumb_width = reader.getThumbSizeX()
-
-            # Reshape based on RGB channels and interleaving
-            if meta.shape.rgb > 1:
-                if meta.is_interleaved:
-                    thumb.shape = (thumb_height, thumb_width, meta.shape.rgb)
-                else:
-                    thumb.shape = (meta.shape.rgb, thumb_height, thumb_width)
-                    thumb = np.transpose(thumb, (1, 2, 0))
-            else:
-                thumb.shape = (thumb_height, thumb_width)
-
-            return thumb
+            java_buffer = memoryview(reader.openThumbBytes(idx))  # type: ignore
+            thumb = np.frombuffer(java_buffer, meta.dtype).copy()
+            return _reshape_image_buffer(
+                thumb,
+                dtype=meta.dtype,
+                height=reader.getThumbSizeY(),
+                width=reader.getThumbSizeX(),
+                rgb=meta.shape.rgb,
+                interleaved=meta.is_interleaved,
+            )
 
     def _get_series(self, index: int) -> Series:
         """Internal method to get a Series with index validation."""
@@ -1052,23 +1045,19 @@ class BioFile(Sequence[Series]):
         width: int,
     ) -> np.ndarray:
         """Read plane directly (fast path for <2GB planes)."""
-        shape = meta.shape
+        n_rgb = meta.shape.rgb
+        dtype = meta.dtype
         idx = reader.getIndex(z, c, t)
-
         java_buffer = reader.openBytes(idx, x_start, y_start, width, height)
-        im = np.frombuffer(memoryview(java_buffer), meta.dtype)  # type: ignore
-
-        # Reshape
-        if shape.rgb > 1:
-            if meta.is_interleaved:
-                im.shape = (height, width, shape.rgb)
-            else:
-                im.shape = (shape.rgb, height, width)
-                im = np.transpose(im, (1, 2, 0))
-        else:
-            im.shape = (height, width)
-
-        return im
+        im = np.frombuffer(memoryview(java_buffer), dtype)  # type: ignore
+        return _reshape_image_buffer(
+            im,
+            dtype=dtype,
+            height=height,
+            width=width,
+            rgb=n_rgb,
+            interleaved=meta.is_interleaved,
+        )
 
     def _calculate_tile_height(self, meta: CoreMetadata, region_width: int) -> int:
         """Calculate max rows per tile respecting Java array limit and heap space.
@@ -1104,15 +1093,16 @@ class BioFile(Sequence[Series]):
         Key insight: openBytes() dominates time (~98%), so minimize tile count.
         Strategy: Reuse one large buffer, read full-width rows, copy to output.
         """
-        shape = meta.shape
+        n_rgb = meta.shape.rgb
+        dtype = meta.dtype
 
         # Preallocate output
-        output_shape = (height, width, shape.rgb) if shape.rgb > 1 else (height, width)
-        output = np.empty(output_shape, dtype=meta.dtype)
+        output_shape = (height, width, n_rgb) if n_rgb > 1 else (height, width)
+        output = np.empty(output_shape, dtype=dtype)
 
         # Calculate tile size
         tile_height = self._calculate_tile_height(meta, width)
-        row_bytes = width * meta.dtype.itemsize * meta.shape.rgb
+        row_bytes = width * dtype.itemsize * n_rgb
 
         # Allocate buffer with fallback for OOM
         # Key lesson: Heap size often limits us before theoretical 2GB limit
@@ -1145,17 +1135,17 @@ class BioFile(Sequence[Series]):
             # Copy tile data (count is elements, not bytes)
             tile_data = np.frombuffer(
                 memoryview(tile_buffer),  # pyright: ignore[reportArgumentType]
-                dtype=meta.dtype,
-                count=h * width * shape.rgb,
+                dtype=dtype,
+                count=h * width * n_rgb,
             ).copy()
 
             # Copy to output
-            if shape.rgb > 1:
+            if n_rgb > 1:
                 if meta.is_interleaved:
                     output[y_offset : y_offset + h].ravel()[:] = tile_data
                 else:
                     # Non-interleaved needs transpose
-                    tile = tile_data.reshape(shape.rgb, h, width).transpose(1, 2, 0)
+                    tile = tile_data.reshape(n_rgb, h, width).transpose(1, 2, 0)
                     output[y_offset : y_offset + h] = tile
             else:
                 output[y_offset : y_offset + h].ravel()[:] = tile_data
@@ -1221,3 +1211,21 @@ class _EnsureOpenContext(AbstractContextManager[BioFile]):
     ) -> Any:
         if self.close_on_exit:
             self.biofile.close()
+
+
+def _reshape_image_buffer(
+    data: np.ndarray,
+    *,
+    dtype: np.dtype[Any],
+    height: int,
+    width: int,
+    rgb: int,
+    interleaved: bool,
+) -> np.ndarray:
+    """Reshape flat pixel buffer into 2D/3D image array."""
+    arr = np.asarray(data, dtype=dtype, copy=False)
+    if rgb > 1:
+        if interleaved:
+            return arr.reshape(height, width, rgb)
+        return arr.reshape(rgb, height, width).transpose(1, 2, 0)
+    return arr.reshape(height, width)
