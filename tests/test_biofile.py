@@ -219,3 +219,6 @@ def test_get_thumbnail_basic(opened_biofile: BioFile) -> None:
     assert thumb.ndim in (2, 3)
     assert 0 < thumb.shape[0] <= 128
     assert 0 < thumb.shape[1] <= 128
+
+    # can also be retrieved via series method
+    assert np.array_equal(thumb, opened_biofile[0].get_thumbnail())
