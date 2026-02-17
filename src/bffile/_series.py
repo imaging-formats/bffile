@@ -133,6 +133,31 @@ class Series:
         lazy = self.as_array(resolution=resolution)
         return lazy.to_zarr_store(tile_size=tile_size)
 
+    def get_thumbnail(
+        self, *, t: int = 0, c: int = 0, z: int | None = None
+    ) -> np.ndarray:
+        """Get thumbnail image for specified series.
+
+        Returns a downsampled version of the specified plane from this series, scaled to
+        fit within 128x128 pixels while maintaining aspect ratio.
+
+        Parameters
+        ----------
+        t : int, optional
+            Time index for thumbnail plane, by default 0
+        c : int, optional
+            Channel index for thumbnail plane, by default 0
+        z : int | None, optional
+            Z-slice index for thumbnail plane, by default None (take the central slice)
+
+        Returns
+        -------
+        np.ndarray
+            Thumbnail image as numpy array with shape (H, W) for grayscale or
+            (H, W, RGB) for RGB images. Maximum dimension is 128 pixels.
+        """
+        return self._biofile.get_thumbnail(series=self._index, t=t, c=c, z=z)
+
     def read_plane(
         self,
         *,

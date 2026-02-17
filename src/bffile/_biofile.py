@@ -940,6 +940,57 @@ class BioFile(Sequence[Series]):
             i += resolution_count
         return result
 
+    def get_thumbnail(
+        self, series: int = 0, *, t: int = 0, c: int = 0, z: int | None = None
+    ) -> np.ndarray:
+        """Get thumbnail image for specified series.
+
+        Returns a downsampled version of the specified plane from the specified series,
+        scaled to fit within 128x128 pixels while maintaining aspect ratio.
+
+        Parameters
+        ----------
+        series : int, optional
+            Series index to get thumbnail from, by default 0
+        t : int, optional
+            Time index for thumbnail plane, by default 0
+        c : int, optional
+            Channel index for thumbnail plane, by default 0
+        z : int | None, optional
+            Z-slice index for thumbnail plane, by default None (take the central slice)
+
+        Returns
+        -------
+        np.ndarray
+            Thumbnail image as numpy array with shape (H, W) for grayscale or
+            (H, W, RGB) for RGB images. Maximum dimension is 128 pixels.
+        """
+        reader = self._ensure_java_reader()
+        meta = self.core_metadata(series=series)
+
+        with self._lock:
+            reader.setSeries(series)
+            if z is None:
+                z = meta.shape.z // 2  # Default to central Z slice if not specified
+            idx = reader.getIndex(z, c, t)
+            java_buffer = reader.openThumbBytes(idx)
+
+            thumb = np.frombuffer(memoryview(java_buffer), meta.dtype).copy()  # type: ignore
+            thumb_height = reader.getThumbSizeY()
+            thumb_width = reader.getThumbSizeX()
+
+            # Reshape based on RGB channels and interleaving
+            if meta.shape.rgb > 1:
+                if meta.is_interleaved:
+                    thumb.shape = (thumb_height, thumb_width, meta.shape.rgb)
+                else:
+                    thumb.shape = (meta.shape.rgb, thumb_height, thumb_width)
+                    thumb = np.transpose(thumb, (1, 2, 0))
+            else:
+                thumb.shape = (thumb_height, thumb_width)
+
+            return thumb
+
     def _get_series(self, index: int) -> Series:
         """Internal method to get a Series with index validation."""
         n = len(self)  # also validates open state
