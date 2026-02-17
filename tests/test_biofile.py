@@ -207,3 +207,18 @@ def test_lookup_table(any_file: Path) -> None:
                 assert lut.shape[0] >= 1  # At least one channel
                 assert lut.shape[1] >= 1  # At least one value
                 assert lut.dtype in (np.uint8, np.uint16)
+
+
+def test_get_thumbnail_basic(opened_biofile: BioFile) -> None:
+    """Test basic thumbnail retrieval."""
+    if opened_biofile.filename.endswith(".svs"):
+        pytest.xfail("SVS reader has a bug")
+
+    thumb = opened_biofile.get_thumbnail()
+    assert isinstance(thumb, np.ndarray)
+    assert thumb.ndim in (2, 3)
+    assert 0 < thumb.shape[0] <= 128
+    assert 0 < thumb.shape[1] <= 128
+
+    # can also be retrieved via series method
+    assert np.array_equal(thumb, opened_biofile[0].get_thumbnail())
