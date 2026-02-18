@@ -574,7 +574,7 @@ class LazyBioArray:
         self,
         output: np.ndarray,
         selection: tuple[range, range, range, slice, slice, slice],
-        squeezed: SqueezedTCZYXS | list[bool],
+        squeezed: SqueezedTCZYXS,
     ) -> None:
         """Fill output array by reading planes from Bio-Formats.
 
@@ -584,10 +584,11 @@ class LazyBioArray:
             Pre-allocated output array to fill
         selection : tuple
             (t_range, c_range, z_range, y_slice, x_slice, s_slice)
-        squeezed : list[bool]
+        squeezed : SqueezedTCZYXS
             Which TCZYXS dimensions are squeezed (True = squeezed)
         """
         t_range, c_range, z_range, y_slice, x_slice, s_slice = selection
+        t_squee, c_squee, z_squee, y_squee, x_squee, s_squee = squeezed
 
         # Check if any dimension is empty (no data to read)
         if len(t_range) == 0 or len(c_range) == 0 or len(z_range) == 0:
@@ -608,13 +609,12 @@ class LazyBioArray:
             read_plane = bf._read_plane
 
             # Pre-compute specialized writer to avoid tuple building on each write
-            write_plane = _make_plane_writer(output, *squeezed[:3])
+            write_plane = _make_plane_writer(output, t_squee, c_squee, z_squee)
 
             s_index: int | slice | None = None
             if self._meta.shape.rgb > 1:
-                if squeezed[5]:
-                    s_start, _s_stop, _ = s_slice.indices(self._meta.shape.rgb)
-                    s_index = s_start
+                if s_squee:
+                    s_index = s_slice.indices(self._meta.shape.rgb)[0]
                 else:
                     s_index = s_slice
 
@@ -626,6 +626,12 @@ class LazyBioArray:
                 plane = read_plane(reader, meta, t, c, z, y_slice, x_slice)
                 if s_index is not None:
                     plane = plane[..., s_index]
+                if y_squee:  # y squeezed: drop axis 0
+                    plane = plane[0]
+                    if x_squee:  # x now at axis 0 after y dropped
+                        plane = plane[0]
+                elif x_squee:  # only x squeezed: drop axis 1
+                    plane = plane[:, 0]
                 write_plane(ti, ci, zi, plane)
 
 
