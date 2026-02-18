@@ -370,6 +370,7 @@ def test_scalar_index_all_dimensions(simple_file: Path, rgb_file: Path) -> None:
         arr = bf.as_array()
         scalar = np.asarray(arr[0, 0, 0, 0, 0])
         assert scalar.ndim == 0
+        _ = scalar.item()  # should not raise
         full = np.asarray(arr)
         assert scalar[()] == full[0, 0, 0, 0, 0]
 
@@ -378,6 +379,7 @@ def test_scalar_index_all_dimensions(simple_file: Path, rgb_file: Path) -> None:
         assert arr.ndim == 6  # t, c, z, y, x, rgb
         scalar = np.asarray(arr[0, 0, 0, 0, 0, 0])
         assert scalar.ndim == 0
+        _ = scalar.item()  # should not raise
         full = np.asarray(arr)
         assert scalar[()] == full[0, 0, 0, 0, 0, 0]
 
