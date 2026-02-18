@@ -364,24 +364,41 @@ def test_rgb_index_composition_uses_parent_bounds(rgb_file: Path) -> None:
         np.testing.assert_array_equal(materialized, expected)
 
 
-def test_scalar_index_all_dimensions(simple_file: Path, rgb_file: Path) -> None:
+@pytest.mark.parametrize(
+    "idx",
+    [
+        np.s_[0, 0, 0, 0, :, 0],
+        np.s_[0, 0, 0, 0, 0, 0],
+        np.s_[0, 0, 0, 0, 0],
+        np.s_[0, 0, 0, 0],
+        np.s_[0, 0, 0, :, 0],
+        np.s_[..., 0],
+        np.s_[..., 0, 0],
+    ],
+)
+def test_index_all_dimensions(simple_file: Path, rgb_file: Path, idx: tuple) -> None:
     """Regression: indexing all dimensions to a scalar must not raise IndexError."""
     with BioFile(simple_file) as bf:
         arr = bf.as_array()
-        scalar = np.asarray(arr[0, 0, 0, 0, 0])
-        assert scalar.ndim == 0
-        _ = scalar.item()  # should not raise
-        full = np.asarray(arr)
-        assert scalar[()] == full[0, 0, 0, 0, 0]
+        np_arr = np.asarray(arr)
+        if len(idx) > arr.ndim:
+            pytest.skip("Index has more dimensions than array")
+        scalar = np.asarray(arr[idx])
+        np.testing.assert_array_equal(scalar, np_arr[idx])
+        all_scalar = isinstance(idx, tuple) and all(isinstance(i, int) for i in idx)
+        if all_scalar and len(idx) == arr.ndim:
+            assert scalar.ndim == 0
+            _ = scalar.item()  # should not raise
 
     with BioFile(rgb_file) as bf:
         arr = bf.as_array()
-        assert arr.ndim == 6  # t, c, z, y, x, rgb
-        scalar = np.asarray(arr[0, 0, 0, 0, 0, 0])
-        assert scalar.ndim == 0
-        _ = scalar.item()  # should not raise
-        full = np.asarray(arr)
-        assert scalar[()] == full[0, 0, 0, 0, 0, 0]
+        np_arr = np.asarray(arr)
+        scalar = np.asarray(arr[idx])
+        np.testing.assert_array_equal(scalar, np_arr[idx])
+        all_scalar = isinstance(idx, tuple) and all(isinstance(i, int) for i in idx)
+        if all_scalar and len(idx) == arr.ndim:
+            assert scalar.ndim == 0
+            _ = scalar.item()  # should not raise
 
 
 def test_dimension_squeezing_composition(opened_biofile: BioFile) -> None:
