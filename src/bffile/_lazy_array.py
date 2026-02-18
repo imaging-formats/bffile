@@ -648,7 +648,7 @@ def _make_plane_writer(
         case (True, True, False):
             return lambda t, c, z, plane: output.__setitem__((z,), plane)
         case (True, True, True):
-            return lambda t, c, z, plane: output.__setitem__(slice(None), plane)
+            return lambda t, c, z, plane: output.__setitem__(Ellipsis, plane)
 
 
 def _compose_index(

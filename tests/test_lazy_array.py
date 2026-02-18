@@ -364,6 +364,24 @@ def test_rgb_index_composition_uses_parent_bounds(rgb_file: Path) -> None:
         np.testing.assert_array_equal(materialized, expected)
 
 
+def test_scalar_index_all_dimensions(simple_file: Path, rgb_file: Path) -> None:
+    """Regression: indexing all dimensions to a scalar must not raise IndexError."""
+    with BioFile(simple_file) as bf:
+        arr = bf.as_array()
+        scalar = np.asarray(arr[0, 0, 0, 0, 0])
+        assert scalar.ndim == 0
+        full = np.asarray(arr)
+        assert scalar[()] == full[0, 0, 0, 0, 0]
+
+    with BioFile(rgb_file) as bf:
+        arr = bf.as_array()
+        assert arr.ndim == 6  # t, c, z, y, x, rgb
+        scalar = np.asarray(arr[0, 0, 0, 0, 0, 0])
+        assert scalar.ndim == 0
+        full = np.asarray(arr)
+        assert scalar[()] == full[0, 0, 0, 0, 0, 0]
+
+
 def test_dimension_squeezing_composition(opened_biofile: BioFile) -> None:
     """Successive integer indexing squeezes dimensions as expected."""
     arr = opened_biofile.as_array()
