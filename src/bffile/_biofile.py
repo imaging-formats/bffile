@@ -181,7 +181,8 @@ class BioFile(Sequence[Series]):
         series : int, optional
             Series index, by default 0
         resolution : int, optional
-            Resolution level (0 = full resolution), by default 0
+            Resolution level (0 = full resolution), by default 0.  Negative indexing
+            supported (e.g., -1 = lowest resolution).
 
         Returns
         -------
@@ -207,12 +208,8 @@ class BioFile(Sequence[Series]):
                 f"Series index {series} out of range "
                 f"(file has {len(self._core_meta_list)} series)"
             )
-        if resolution < 0 or resolution >= len(self._core_meta_list[series]):
-            raise IndexError(
-                f"Resolution index {resolution} out of range "
-                f"(series {series} has {len(self._core_meta_list[series])} "
-                f"resolution levels)"
-            )
+        n_res = len(self._core_meta_list[series])
+        resolution = _normalize_resolution(resolution, n_res)
         return self._core_meta_list[series][resolution]
 
     def global_metadata(self) -> Mapping[str, Any]:
@@ -399,12 +396,8 @@ class BioFile(Sequence[Series]):
         series : int, optional
             Series index, by default 0
         resolution : int, optional
-            Resolution level (0 = full resolution), by default 0
-
-        Returns
-        -------
-        LazyBioArray
-            Lazy array in (T, C, Z, Y, X) or (T, C, Z, Y, X, rgb) format
+            Resolution level (0 = full resolution), by default 0.  Negative indexing
+            supported (e.g., -1 = lowest resolution).
 
         Examples
         --------
@@ -435,6 +428,8 @@ class BioFile(Sequence[Series]):
         """
         from bffile._lazy_array import LazyBioArray
 
+        meta0 = self.core_metadata(series)  # validates series
+        resolution = _normalize_resolution(resolution, meta0.resolution_count)
         return LazyBioArray(self, series, resolution)
 
     @overload
@@ -487,8 +482,8 @@ class BioFile(Sequence[Series]):
             array store. By default, returns the full group store with all series and
             resolutions.
         resolution : int, optional
-            Resolution level (0 = full resolution), by default 0. Only used if `series`
-            is specified.
+            Resolution level (0 = full resolution), by default 0.  Negative indexing
+            supported (e.g., -1 = lowest resolution).
         tile_size : tuple[int, int], optional
             If provided, Y and X are chunked into tiles of this size instead of
             full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``.
@@ -549,7 +544,8 @@ class BioFile(Sequence[Series]):
         series : int, optional
             Series index to read from, by default 0
         resolution : int, optional
-            Resolution level (0 = full resolution), by default 0
+            Resolution level (0 = full resolution), by default 0.  Negative indexing
+            supported (e.g., -1 = lowest resolution).
         chunks : str or tuple, default "auto"
             Chunk specification. Examples:
             - "auto": Let dask decide (default)
@@ -600,7 +596,8 @@ class BioFile(Sequence[Series]):
         series : int, optional
             Series index to read from, by default 0
         resolution : int, optional
-            Resolution level (0 = full resolution), by default 0
+            Resolution level (0 = full resolution), by default 0.  Negative indexing
+            supported (e.g., -1 = lowest resolution).
         """
         return self.as_array(series=series, resolution=resolution).to_xarray()
 
@@ -796,7 +793,8 @@ class BioFile(Sequence[Series]):
         series : int, optional
             Series index, by default 0
         resolution : int, optional
-            Resolution level (0 = full resolution), by default 0
+            Resolution level (0 = full resolution), by default 0.  Negative indexing
+            supported (e.g., -1 = lowest resolution).
         buffer : np.ndarray, optional
             Pre-allocated buffer for efficient reuse in loops
 
@@ -818,6 +816,8 @@ class BioFile(Sequence[Series]):
         """
         reader = self._ensure_java_reader()
         reader.setSeries(series)
+        n_res = len(self._core_meta_list[series])  # type: ignore[index]
+        resolution = _normalize_resolution(resolution, n_res)
         reader.setResolution(resolution)
 
         # Get metadata for this series/resolution
@@ -941,7 +941,13 @@ class BioFile(Sequence[Series]):
         return result
 
     def get_thumbnail(
-        self, series: int = 0, *, t: int = 0, c: int = 0, z: int | None = None
+        self,
+        series: int = 0,
+        *,
+        t: int = 0,
+        c: int = 0,
+        z: int | None = None,
+        max_size: int | tuple[int, int] = 128,
     ) -> np.ndarray:
         """Get thumbnail image for specified series.
 
@@ -958,31 +964,44 @@ class BioFile(Sequence[Series]):
             Channel index for thumbnail plane, by default 0
         z : int | None, optional
             Z-slice index for thumbnail plane, by default None (take the central slice)
+        max_size : int | tuple[int, int], optional
+            Maximum thumbnail size. If int, limits both width and height to this value.
+            If tuple, interpreted as ``(max_width, max_height)``.
 
         Returns
         -------
         np.ndarray
             Thumbnail image as numpy array with shape (H, W) for grayscale or
-            (H, W, RGB) for RGB images. Maximum dimension is 128 pixels.
+            (H, W, RGB) for RGB images.
         """
         reader = self._ensure_java_reader()
-        meta = self.core_metadata(series=series)
 
+        # Get lowest resolution of requested series + downscale
+        low_res = self.core_metadata(series=series).resolution_count - 1
+        low_meta = self.core_metadata(series=series, resolution=low_res)
+        sy, sx = low_meta.shape.y, low_meta.shape.x
+
+        # Cap read size if lowest resolution is still large
+        if sy > THUMB_MAX_READ_SIZE or sx > THUMB_MAX_READ_SIZE:
+            scale = max(sy / THUMB_MAX_READ_SIZE, sx / THUMB_MAX_READ_SIZE)
+            read_h = max(1, round(sy / scale))
+            read_w = max(1, round(sx / scale))
+            y_start = (sy - read_h) // 2
+            x_start = (sx - read_w) // 2
+        else:
+            read_h, read_w = sy, sx
+            y_start, x_start = 0, 0
+
+        tz = low_meta.shape.z // 2 if z is None else z
         with self._lock:
             reader.setSeries(series)
-            if z is None:
-                z = meta.shape.z // 2  # Default to central Z slice if not specified
-            idx = reader.getIndex(z, c, t)
-            java_buffer = memoryview(reader.openThumbBytes(idx))  # type: ignore
-            thumb = np.frombuffer(java_buffer, meta.dtype).copy()
-            return _reshape_image_buffer(
-                thumb,
-                dtype=meta.dtype,
-                height=reader.getThumbSizeY(),
-                width=reader.getThumbSizeX(),
-                rgb=meta.shape.rgb,
-                interleaved=meta.is_interleaved,
+            reader.setResolution(low_res)
+            img = self._read_plane_direct(
+                reader, low_meta, t, c, tz, y_start, x_start, read_h, read_w
             )
+
+        target_x, target_y = _thumbnail_target_size(sx, sy, max_size=max_size)
+        return _resize_thumbnail(img, target_h=target_y, target_w=target_x)
 
     def _get_series(self, index: int) -> Series:
         """Internal method to get a Series with index validation."""
@@ -1229,3 +1248,84 @@ def _reshape_image_buffer(
             return arr.reshape(height, width, rgb)
         return arr.reshape(rgb, height, width).transpose(1, 2, 0)
     return arr.reshape(height, width)
+
+
+THUMB_MAX_READ_SIZE = 1024  # max pixels/side to read from source before downscaling
+
+
+def _normalize_resolution(resolution: int, resolution_count: int) -> int:
+    original = resolution
+    if resolution < 0:
+        resolution += resolution_count
+    if not 0 <= resolution < resolution_count:
+        raise IndexError(
+            f"Resolution {original} out of range (0 to {resolution_count - 1})"
+        )
+    return resolution
+
+
+def _normalize_thumbnail_max_size(max_size: int | tuple[int, int]) -> tuple[int, int]:
+    """Return `(max_width, max_height)` with validation."""
+    if isinstance(max_size, int):
+        max_size = (max_size, max_size)
+    if len(max_size) != 2:  # pragma: no cover
+        raise ValueError("max_size must be an int or a tuple of two ints")
+    max_width, max_height = max_size
+    if max_width < 1 or max_height < 1:
+        raise ValueError("max_size values must be >= 1")
+    return max_width, max_height
+
+
+def _thumbnail_target_size(
+    width: int, height: int, *, max_size: int | tuple[int, int]
+) -> tuple[int, int]:
+    """Fit source size inside a box, preserving aspect ratio and never upscaling."""
+    max_width, max_height = _normalize_thumbnail_max_size(max_size)
+    if width <= max_width and height <= max_height:
+        return max(1, width), max(1, height)
+
+    scale = min(max_width / width, max_height / height)
+    target_width = max(1, min(max_width, round(width * scale)))
+    target_height = max(1, min(max_height, round(height * scale)))
+    return target_width, target_height
+
+
+def _resize_thumbnail(img: np.ndarray, *, target_h: int, target_w: int) -> np.ndarray:
+    """Resize image to exact thumbnail shape using pure NumPy.
+
+    Uses area averaging for downscaling and nearest-neighbor for upscaling.
+    """
+    h, w = img.shape[:2]
+    if (h, w) == (target_h, target_w):
+        return img
+
+    if target_h >= h or target_w >= w:
+        y_idx = np.linspace(0, h - 1, target_h, dtype=np.intp)
+        x_idx = np.linspace(0, w - 1, target_w, dtype=np.intp)
+        return img[np.ix_(y_idx, x_idx)] if img.ndim == 2 else img[y_idx][:, x_idx]
+
+    y_edges = np.linspace(0, h, target_h + 1)
+    x_edges = np.linspace(0, w, target_w + 1)
+
+    y0 = np.floor(y_edges[:-1]).astype(np.intp)
+    y1 = np.ceil(y_edges[1:]).astype(np.intp)
+    x0 = np.floor(x_edges[:-1]).astype(np.intp)
+    x1 = np.ceil(x_edges[1:]).astype(np.intp)
+
+    y1 = np.maximum(y1, y0 + 1)
+    x1 = np.maximum(x1, x0 + 1)
+
+    out_shape = (target_h, target_w, *img.shape[2:])
+    out = np.empty(out_shape, dtype=np.float64)
+
+    for oy in range(target_h):
+        ys, ye = y0[oy], y1[oy]
+        for ox in range(target_w):
+            xs, xe = x0[ox], x1[ox]
+            out[oy, ox] = img[ys:ye, xs:xe].mean(axis=(0, 1))
+
+    if np.issubdtype(img.dtype, np.integer):
+        info = np.iinfo(img.dtype)
+        out = np.clip(np.rint(out), info.min, info.max)
+
+    return out.astype(img.dtype, copy=False)

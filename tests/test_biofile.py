@@ -160,6 +160,23 @@ def test_core_meta_resolution_bounds(pyramid_file: Path) -> None:
             bf.core_metadata(series=0, resolution=100)
 
 
+def test_negative_resolution_indexing(pyramid_file: Path) -> None:
+    """resolution=-1 should equal the lowest resolution level."""
+    with BioFile(pyramid_file) as bf:
+        n_res = bf.core_metadata(series=0).resolution_count
+        meta_last = bf.core_metadata(series=0, resolution=n_res - 1)
+        meta_neg = bf.core_metadata(series=0, resolution=-1)
+        assert meta_last == meta_neg
+
+        # as_array and read_plane also accept negative resolution
+        arr_last = bf.as_array(series=0, resolution=n_res - 1)
+        arr_neg = bf.as_array(series=0, resolution=-1)
+        assert arr_last.shape == arr_neg.shape
+
+        with pytest.raises(IndexError, match="out of range"):
+            bf.core_metadata(series=0, resolution=-(n_res + 1))
+
+
 def test_biofile_with_meta_disabled(simple_file: Path) -> None:
     with BioFile(simple_file, meta=False) as bf:
         xml = bf.ome_xml
@@ -211,9 +228,6 @@ def test_lookup_table(any_file: Path) -> None:
 
 def test_get_thumbnail_basic(opened_biofile: BioFile) -> None:
     """Test basic thumbnail retrieval."""
-    if opened_biofile.filename.endswith(".svs"):
-        pytest.xfail("SVS reader has a bug")
-
     thumb = opened_biofile.get_thumbnail()
     assert isinstance(thumb, np.ndarray)
     assert thumb.ndim in (2, 3)
@@ -222,3 +236,20 @@ def test_get_thumbnail_basic(opened_biofile: BioFile) -> None:
 
     # can also be retrieved via series method
     assert np.array_equal(thumb, opened_biofile[0].get_thumbnail())
+
+
+def test_get_thumbnail_custom_max_size(opened_biofile: BioFile) -> None:
+    """Custom max_size constrains output to requested box."""
+    thumb = opened_biofile.get_thumbnail(max_size=(64, 48))
+    assert isinstance(thumb, np.ndarray)
+    assert 0 < thumb.shape[1] <= 64
+    assert 0 < thumb.shape[0] <= 48
+
+
+def test_get_thumbnail_pyramid(pyramid_file: Path) -> None:
+    """Test that thumbnail uses lowest resolution and supports negative indexing."""
+    with BioFile(pyramid_file) as bf:
+        thumb = bf.get_thumbnail()
+        assert isinstance(thumb, np.ndarray)
+        assert 0 < thumb.shape[0] <= 128
+        assert 0 < thumb.shape[1] <= 128
