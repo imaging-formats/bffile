@@ -952,12 +952,23 @@ class BioFile(Sequence[Series]):
         t: int = 0,
         c: int = 0,
         z: int | None = None,
-        max_size: int | tuple[int, int] = 128,
+        max_thumbnail_size: int | tuple[int, int] = 128,
+        max_read_size: int = 4096,
     ) -> np.ndarray:
         """Get thumbnail image for specified series.
 
         Returns a downsampled version of the specified plane from the specified series,
-        scaled to fit within 128x128 pixels while maintaining aspect ratio.
+        channel, timepoint, and z-slice (default: central slice). The thumbnail is
+        scaled to fit within `max_thumbnail_size` pixels while maintaining aspect ratio.
+
+        This method reads the _lowest_ resolution level available for the series, and
+        then downsamples it to create the thumbnail. If the lowest resolution is still
+        larger than `max_read_size`, it will read a centered sub-region of the lowest
+        resolution, no greater than `max_read_size` in either dimension.
+
+        !!! note
+            For stability and performance, this does *not* use the java openThumbBytes
+            API.
 
         Parameters
         ----------
@@ -969,9 +980,13 @@ class BioFile(Sequence[Series]):
             Channel index for thumbnail plane, by default 0
         z : int | None, optional
             Z-slice index for thumbnail plane, by default None (take the central slice)
-        max_size : int | tuple[int, int], optional
+        max_thumbnail_size : int | tuple[int, int], optional
             Maximum thumbnail size. If int, limits both width and height to this value.
             If tuple, interpreted as ``(max_width, max_height)``.
+        max_read_size : int, optional
+            Maximum dimension size to read directly from Bio-Formats before switching.
+            If this is lower than the size of the full plane, the image will be cropped.
+            Decrease for speed, increase for field of view.
 
         Returns
         -------
@@ -987,8 +1002,8 @@ class BioFile(Sequence[Series]):
         sy, sx = low_meta.shape.y, low_meta.shape.x
 
         # Cap read size if lowest resolution is still large
-        if sy > THUMB_MAX_READ_SIZE or sx > THUMB_MAX_READ_SIZE:
-            scale = max(sy / THUMB_MAX_READ_SIZE, sx / THUMB_MAX_READ_SIZE)
+        if sy > max_read_size or sx > max_read_size:
+            scale = max(sy / max_read_size, sx / max_read_size)
             read_h = max(1, round(sy / scale))
             read_w = max(1, round(sx / scale))
             y_start = (sy - read_h) // 2
@@ -1005,7 +1020,7 @@ class BioFile(Sequence[Series]):
                 reader, low_meta, t, c, tz, y_start, x_start, read_h, read_w
             )
 
-        target_x, target_y = _thumbnail_target_size(sx, sy, max_size=max_size)
+        target_x, target_y = _thumbnail_target_size(sx, sy, max_size=max_thumbnail_size)
         return _resize_thumbnail(img, target_h=target_y, target_w=target_x)
 
     def _get_series(self, index: int) -> Series:
@@ -1255,9 +1270,6 @@ def _reshape_image_buffer(
     return arr.reshape(height, width)
 
 
-THUMB_MAX_READ_SIZE = 4096  # max pixels/side to read from source before downscaling
-
-
 def _normalize_resolution(resolution: int, resolution_count: int) -> int:
     if resolution < 0:
         resolution += resolution_count
@@ -1275,7 +1287,7 @@ def _normalize_thumbnail_max_size(max_size: int | tuple[int, int]) -> tuple[int,
     if len(max_size) != 2:  # pragma: no cover
         raise ValueError("max_size must be an int or a tuple of two ints")
     max_width, max_height = max_size
-    if max_width < 1 or max_height < 1:
+    if max_width < 1 or max_height < 1:  # pragma: no cover
         raise ValueError("max_size values must be >= 1")
     return max_width, max_height
 
@@ -1300,7 +1312,7 @@ def _resize_thumbnail(img: np.ndarray, *, target_h: int, target_w: int) -> np.nd
     Uses area averaging for downscaling and nearest-neighbor for upscaling.
     """
     h, w = img.shape[:2]
-    if (h, w) == (target_h, target_w):
+    if (h, w) == (target_h, target_w):  # pragma: no cover
         return img
 
     if target_h >= h or target_w >= w:

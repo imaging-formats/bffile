@@ -240,7 +240,7 @@ def test_get_thumbnail_basic(opened_biofile: BioFile) -> None:
 
 def test_get_thumbnail_custom_max_size(opened_biofile: BioFile) -> None:
     """Custom max_size constrains output to requested box."""
-    thumb = opened_biofile.get_thumbnail(max_size=(64, 48))
+    thumb = opened_biofile.get_thumbnail(max_thumbnail_size=(64, 48))
     assert isinstance(thumb, np.ndarray)
     assert 0 < thumb.shape[1] <= 64
     assert 0 < thumb.shape[0] <= 48
