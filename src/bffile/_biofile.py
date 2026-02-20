@@ -1255,7 +1255,7 @@ def _reshape_image_buffer(
     return arr.reshape(height, width)
 
 
-THUMB_MAX_READ_SIZE = 1024  # max pixels/side to read from source before downscaling
+THUMB_MAX_READ_SIZE = 4096  # max pixels/side to read from source before downscaling
 
 
 def _normalize_resolution(resolution: int, resolution_count: int) -> int:
