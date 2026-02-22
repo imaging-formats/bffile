@@ -79,7 +79,40 @@ def test_core_meta_returns_metadata(opened_biofile: BioFile) -> None:
     assert hasattr(meta, "dtype")
     assert hasattr(meta, "dimension_order")
     assert len(meta.shape) == 6  # CoreMetadata always has 6 elements (TCZYX + rgb)
+    assert meta.rgb_count == meta.shape.rgb
     assert isinstance(meta.dtype, np.dtype)
+
+
+def test_gif_palette_expands_to_channels(simple_file: Path) -> None:
+    gif_file = simple_file.parent / "example.gif"
+    with BioFile(gif_file) as bf:
+        meta = bf.core_metadata()
+        assert meta.shape.c == 1
+        assert meta.shape.rgb == 3
+        assert meta.is_rgb is True
+        assert meta.is_indexed is False
+
+        r = bf._java_reader
+        assert r is not None
+        r.setSeries(0)
+        assert r.getSizeC() == 3
+
+
+def test_false_color_indexed_file_not_expanded(simple_file: Path) -> None:
+    nd2_file = simple_file.parent / "ND2_dims_c2y32x32.nd2"
+    with BioFile(nd2_file) as bf:
+        meta = bf.core_metadata()
+        assert meta.shape.c == 2
+        assert meta.shape.rgb == 1
+        assert meta.is_rgb is False
+        assert meta.is_indexed
+        assert meta.is_false_color
+
+        r = bf._java_reader
+        assert r is not None
+        r.setSeries(0)
+        assert r.getSizeC() == 2
+        assert r.getImageCount() == 2
 
 
 def test_ome_xml_property(opened_biofile: BioFile) -> None:
