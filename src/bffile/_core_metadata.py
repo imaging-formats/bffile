@@ -103,6 +103,7 @@ class CoreMetadata:
                 t=meta.sizeT,
                 rgb=rgb_count,
             ),
+            rgb_count=rgb_count,
             thumb_size_x=meta.thumbSizeX,
             thumb_size_y=meta.thumbSizeY,
             bits_per_pixel=meta.bitsPerPixel,

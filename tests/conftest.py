@@ -28,6 +28,12 @@ def any_file(request: pytest.FixtureRequest) -> Path:
 
 
 @pytest.fixture
+def data_dir() -> Path:
+    """Path to the test data directory."""
+    return TEST_DATA
+
+
+@pytest.fixture
 def simple_file() -> Path:
     """Small TIFF file for fast unit tests (7KB)."""
     return TEST_DATA / "s_1_t_1_c_1_z_1.ome.tiff"

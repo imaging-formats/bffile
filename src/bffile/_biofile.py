@@ -147,6 +147,12 @@ class BioFile(Sequence[Series]):
         See: https://docs.openmicroscopy.org/bio-formats/latest/formats/options.html
         For example: to turn off chunkmap table reading for ND2 files, use
         `options={"nativend2.chunkmap": False}`
+    channel_filler : bool or None, optional
+        Whether to wrap the reader with Bio-Formats' ChannelFiller, which
+        expands indexed-color data (e.g. GIF palettes) into RGB. If `True`,
+        always use ChannelFiller. If `False`, never use it. If `None`
+        (default), automatically apply it when the file contains true
+        indexed-color data.
     """
 
     def __init__(
@@ -157,6 +163,7 @@ class BioFile(Sequence[Series]):
         original_meta: bool = False,
         memoize: int | bool = 0,
         options: dict[str, bool] | None = None,
+        channel_filler: bool | None = None,
     ):
         self._path = str(path)
         self._lock = RLock()
@@ -164,6 +171,7 @@ class BioFile(Sequence[Series]):
         self._original_meta = original_meta
         self._memoize = memoize
         self._options = options
+        self._channel_filler = channel_filler
 
         # Reader and finalizer created in open()
         self._java_reader: IFormatReader | None = None
@@ -281,6 +289,10 @@ class BioFile(Sequence[Series]):
             r = jimport("loci.formats.ImageReader")()
             r.setFlattenedResolutions(False)
 
+            if self._channel_filler is True:
+                ChannelFiller = jimport("loci.formats.ChannelFiller")
+                r = ChannelFiller(r)
+
             if self._memoize > 0:
                 Memoizer = jimport("loci.formats.Memoizer")
                 if BIOFORMATS_MEMO_DIR is not None:
@@ -301,6 +313,17 @@ class BioFile(Sequence[Series]):
 
             try:
                 r.setId(self._path)
+
+                # Auto-detect: wrap with ChannelFiller for true indexed color
+                if (
+                    self._channel_filler is None
+                    and r.isIndexed()
+                    and not r.isFalseColor()
+                ):
+                    ChannelFiller = jimport("loci.formats.ChannelFiller")
+                    r = ChannelFiller(r)
+                    r.setId(self._path)
+
                 core_meta = self._get_core_metadata(r)
             except Exception:  # pragma: no cover
                 with suppress(Exception):

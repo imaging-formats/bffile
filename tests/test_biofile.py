@@ -79,7 +79,35 @@ def test_core_meta_returns_metadata(opened_biofile: BioFile) -> None:
     assert hasattr(meta, "dtype")
     assert hasattr(meta, "dimension_order")
     assert len(meta.shape) == 6  # CoreMetadata always has 6 elements (TCZYX + rgb)
+    assert meta.rgb_count == meta.shape.rgb
     assert isinstance(meta.dtype, np.dtype)
+
+
+@pytest.mark.parametrize(
+    ("channel_filler", "expect_rgb", "expect_indexed"),
+    [(None, 3, False), (True, 3, False), (False, 1, True)],
+    ids=["auto", "forced", "disabled"],
+)
+def test_channel_filler_gif(
+    data_dir: Path,
+    channel_filler: bool | None,
+    expect_rgb: int,
+    expect_indexed: bool,
+) -> None:
+    with BioFile(data_dir / "example.gif", channel_filler=channel_filler) as bf:
+        meta = bf.core_metadata()
+        assert meta.shape.rgb == expect_rgb
+        assert meta.is_indexed is expect_indexed
+
+
+def test_false_color_indexed_file_not_expanded(data_dir: Path) -> None:
+    with BioFile(data_dir / "ND2_dims_c2y32x32.nd2") as bf:
+        meta = bf.core_metadata()
+        assert meta.shape.c == 2
+        assert meta.shape.rgb == 1
+        assert meta.is_rgb is False
+        assert meta.is_indexed
+        assert meta.is_false_color
 
 
 def test_ome_xml_property(opened_biofile: BioFile) -> None:
