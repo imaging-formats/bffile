@@ -16,6 +16,14 @@ Some quick notes/tips for contributors:
 uv run pytest
 ```
 
+The first run will download test data from a Cloudflare R2 bucket. 
+To re-fetch the latest test data at any point, either delete `tests/data`, or use
+[the fetch test data script](https://github.com/psobolewskiPhD/bffile/blob/main/scripts/fetch_test_data.py):
+
+```sh
+uv run python scripts/fetch_test_data.py
+```
+
 Note: To use an isolated [jgo](https://github.com/apposed/jgo) cache directory,
 pass `--no-jgo-cache` to the test command. This will force jgo to resolve dependencies
 from scratch each time, without using any cached artifacts from `~/.jgo`.
