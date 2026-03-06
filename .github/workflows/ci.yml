@@ -113,7 +113,7 @@ jobs:
           PYTEST_ADDOPTS: ${{ matrix.resolution == 'lowest-direct' && '-W ignore' || '' }}
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: covreport-${{ matrix.os }}-py${{ matrix.python-version }}-${{ matrix.bioformats-version }}-${{ matrix.java-version }}-${{ matrix.resolution }}-${{ matrix.group}}
           path: ./.coverage*
@@ -146,7 +146,7 @@ jobs:
 
     steps:
       - name: Download built artifact to dist/
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: Packages
           path: dist
