@@ -72,6 +72,9 @@ docs = [
     "mkdocstrings-python>=2.0.2",
     "zensical>=0.0.21",
 ]
+dask = [
+    "resource-backed-dask-array>=0.1.0",
+]
 
 [tool.uv.sources]
 bffile = { workspace = true }

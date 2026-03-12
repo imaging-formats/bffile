@@ -78,3 +78,17 @@ def test_to_dask_tile_size_validation(simple_file: Path) -> None:
     with BioFile(simple_file) as bf:
         with pytest.raises(ValueError, match="tile_size must be"):
             bf.to_dask(tile_size=(512,))  # type: ignore[arg-type]
+
+
+def test_dask_array_is_picklable(simple_file: Path) -> None:
+    """Dask arrays from to_dask() must be picklable (needed by distributed)."""
+    import pickle
+
+    dask = pytest.importorskip("dask")
+    with BioFile(simple_file) as bf:
+        darr = bf.to_dask()
+        # This fails currently because LazyBioArray holds a BioFile
+        # which has an RLock (unpicklable)
+        roundtripped = pickle.loads(pickle.dumps(darr))
+        with dask.config.set(scheduler="synchronous"):
+            assert roundtripped.compute().shape == darr.shape

@@ -181,6 +181,22 @@ class BioFile(Sequence[Series]):
         self._finalizer: weakref.finalize | None = None
         self._suspended: bool = False
 
+    def __getstate__(self) -> dict:
+        """Pickle support — save constructor args only."""
+        return {
+            "path": self._path,
+            "meta": self._meta,
+            "original_meta": self._original_meta,
+            "memoize": self._memoize,
+            "options": self._options,
+            "channel_filler": self._channel_filler,
+        }
+
+    def __setstate__(self, state: dict) -> None:
+        """Pickle support — reconstruct from constructor args and open."""
+        self.__init__(**state)  # type: ignore[misc]
+        self.open()
+
     def core_metadata(self, series: int = 0, resolution: int = 0) -> CoreMetadata:
         """Get metadata for specified series and resolution.
 

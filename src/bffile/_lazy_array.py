@@ -113,6 +113,31 @@ class LazyBioArray:
         self._squeezed_tczyxs = (False, False, False, False, False, meta.shape.rgb <= 1)
         self._shape = self._effective_shape()
 
+    def __getstate__(self) -> dict:
+        """Pickle support — save enough to reconstruct the view."""
+        return {
+            "biofile": self._biofile,
+            "series": self._series,
+            "resolution": self._resolution,
+            "bounds_tczyxs": self._bounds_tczyxs,
+            "squeezed_tczyxs": self._squeezed_tczyxs,
+        }
+
+    def __setstate__(self, state: dict) -> None:
+        """Pickle support — reconstruct from saved state."""
+        biofile = state["biofile"]
+        series = state["series"]
+        resolution = state["resolution"]
+        self._biofile = biofile
+        self._series = series
+        self._resolution = resolution
+        self._meta = biofile.core_metadata(series, resolution)
+        self._dtype = self._meta.dtype
+        self._full_shape_tczyxs = cast("ShapeTCZYXS", tuple(self._meta.shape))
+        self._bounds_tczyxs = state["bounds_tczyxs"]
+        self._squeezed_tczyxs = state["squeezed_tczyxs"]
+        self._shape = self._effective_shape()
+
     @property
     def shape(self) -> tuple[int, ...]:
         """Array shape in (T, C, Z, Y, X) or (T, C, Z, Y, X, rgb) format."""
