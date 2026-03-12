@@ -181,6 +181,35 @@ class BioFile(Sequence[Series]):
         self._finalizer: weakref.finalize | None = None
         self._suspended: bool = False
 
+    def __getstate__(self) -> dict:
+        """Pickle support — save constructor args, cached metadata, and state."""
+        return {
+            "path": self._path,
+            "meta": self._meta,
+            "original_meta": self._original_meta,
+            "memoize": self._memoize,
+            "options": self._options,
+            "channel_filler": self._channel_filler,
+            "core_meta_list": self._core_meta_list,
+            "cached_ome_meta": self._cached_ome_meta,
+            "was_open": self._java_reader is not None and not self._suspended,
+        }
+
+    def __setstate__(self, state: dict) -> None:
+        """Pickle support — reconstruct with cached metadata, match state."""
+        self.__init__(  # type: ignore[misc]
+            path=state["path"],
+            meta=state["meta"],
+            original_meta=state["original_meta"],
+            memoize=state["memoize"],
+            options=state["options"],
+            channel_filler=state["channel_filler"],
+        )
+        self._core_meta_list = state["core_meta_list"]
+        self._cached_ome_meta = state["cached_ome_meta"]
+        if state["was_open"]:
+            self.open()
+
     def core_metadata(self, series: int = 0, resolution: int = 0) -> CoreMetadata:
         """Get metadata for specified series and resolution.
 
@@ -324,14 +353,16 @@ class BioFile(Sequence[Series]):
                     r = ChannelFiller(r)
                     r.setId(self._path)
 
-                core_meta = self._get_core_metadata(r)
+                # Skip Java metadata parsing if we already have cached metadata
+                # (e.g. restored from pickle)
+                if self._core_meta_list is None:
+                    self._core_meta_list = self._get_core_metadata(r)
             except Exception:  # pragma: no cover
                 with suppress(Exception):
                     r.close()
                 raise
 
             self._java_reader = r
-            self._core_meta_list = core_meta
             self._finalizer = weakref.finalize(self, _close_java_reader, r)
         return self
 
