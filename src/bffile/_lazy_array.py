@@ -125,12 +125,9 @@ class LazyBioArray:
 
     def __setstate__(self, state: dict) -> None:
         """Pickle support — reconstruct from saved state."""
-        biofile = state["biofile"]
-        series = state["series"]
-        resolution = state["resolution"]
-        self._biofile = biofile
-        self._series = series
-        self._resolution = resolution
+        self._biofile = biofile = cast("BioFile", state["biofile"])
+        self._series = series = state["series"]
+        self._resolution = resolution = state["resolution"]
         self._meta = biofile.core_metadata(series, resolution)
         self._dtype = self._meta.dtype
         self._full_shape_tczyxs = cast("ShapeTCZYXS", tuple(self._meta.shape))
@@ -411,6 +408,10 @@ class LazyBioArray:
         )
 
     # ============================ Numpy array protocol ===========================
+
+    def ravel(self, order: str = "C") -> np.ndarray:
+        """Return flattened array (materializes data from disk)."""
+        return np.asarray(self).ravel(order=order)
 
     def __array__(
         self, dtype: np.dtype | None = None, copy: bool | None = None

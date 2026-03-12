@@ -87,8 +87,18 @@ def test_dask_array_is_picklable(simple_file: Path) -> None:
     dask = pytest.importorskip("dask")
     with BioFile(simple_file) as bf:
         darr = bf.to_dask()
-        # This fails currently because LazyBioArray holds a BioFile
-        # which has an RLock (unpicklable)
         roundtripped = pickle.loads(pickle.dumps(darr))
         with dask.config.set(scheduler="synchronous"):
             assert roundtripped.compute().shape == darr.shape
+
+
+def test_dask_to_zarr(simple_file: Path, tmp_path: Path) -> None:
+    """Dask arrays can be written to zarr (issue #61)."""
+    da = pytest.importorskip("dask.array")
+    zarr = pytest.importorskip("zarr")
+    with BioFile(simple_file) as bf:
+        darr = bf.to_dask()
+        zarr_path = tmp_path / "test.zarr"
+        da.to_zarr(darr, str(zarr_path))
+        stored = zarr.open_array(zarr_path, mode="r")
+        assert stored.shape == darr.shape
