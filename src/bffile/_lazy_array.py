@@ -626,7 +626,7 @@ class LazyBioArray:
 
         bf = self._biofile
         # Acquire lock once for entire batch read
-        with bf._lock:
+        with bf.ensure_open(), bf._lock:
             # Set series and resolution once at start (not on every iteration)
             reader = bf._ensure_java_reader()
             reader.setSeries(self._series)
