@@ -195,6 +195,7 @@ class BioFile(Sequence[Series]):
         # 2D structure: list[series][resolution]
         self._core_meta_list: list[list[CoreMetadata]] | None = None
         self._cached_ome_meta: OME | None = None
+        self._cached_ome_xml: str | None = None
         self._finalizer: weakref.finalize | None = None
         self._suspended: bool = False
 
@@ -209,6 +210,7 @@ class BioFile(Sequence[Series]):
             "channel_filler": self._channel_filler,
             "core_meta_list": self._core_meta_list,
             "cached_ome_meta": self._cached_ome_meta,
+            "cached_ome_xml": self._cached_ome_xml,
             "was_open": self._java_reader is not None and not self._suspended,
         }
 
@@ -224,6 +226,7 @@ class BioFile(Sequence[Series]):
         )
         self._core_meta_list = state["core_meta_list"]
         self._cached_ome_meta = state["cached_ome_meta"]
+        self._cached_ome_xml = state.get("cached_ome_xml")
         if state["was_open"]:
             self.open()
 
@@ -612,6 +615,10 @@ class BioFile(Sequence[Series]):
         if series is None:
             from bffile._zarr._group_store import BFOmeZarrStore
 
+            if rdr_name := self._reader_class_name:
+                if rdr_name.removeprefix("loci.formats.in.") in _BROKEN_REOPEN_READERS:
+                    # Eagerly cache ome_metadata so it survives suspension
+                    _ = self.ome_metadata
             return BFOmeZarrStore(self, tile_size=tile_size)
 
         lazy = self.as_array(series=series, resolution=resolution)
@@ -717,19 +724,24 @@ class BioFile(Sequence[Series]):
     @property
     def ome_xml(self) -> str:
         """Return plain OME XML string."""
-        reader = self._ensure_java_reader()
-        if store := reader.getMetadataStore():
-            try:
-                # get metadatastore can return various types of objects,
-                # only the OME pyramidal metadata has dumpXML method,
-                # (but it's also the most common case here and only useful one)
-                # so just warn on error and return empty string.
-                return str(store.dumpXML())  # pyright: ignore
-            except Exception as e:
-                warnings.warn(
-                    f"Failed to retrieve OME XML: {e}", RuntimeWarning, stacklevel=2
-                )
-        return ""
+        if self._cached_ome_xml is None:
+            reader = self._ensure_java_reader()
+            if store := reader.getMetadataStore():
+                try:
+                    # get metadatastore can return various types of objects,
+                    # only the OME pyramidal metadata has dumpXML method,
+                    # (but it's also the most common case here and only useful one)
+                    # so just warn on error and return empty string.
+                    self._cached_ome_xml = str(store.dumpXML())  # pyright: ignore
+                except Exception as e:
+                    warnings.warn(
+                        f"Failed to retrieve OME XML: {e}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+            if self._cached_ome_xml is None:
+                self._cached_ome_xml = ""
+        return self._cached_ome_xml
 
     @property
     def ome_metadata(self) -> OME:
