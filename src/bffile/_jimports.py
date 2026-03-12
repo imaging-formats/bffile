@@ -51,7 +51,7 @@ def _make_picklable_quantity(magnitude: float, units: str) -> PlainQuantity:
     from ome_types.units import ureg
 
     q = ureg.Quantity(magnitude, units)
-    q.__reduce__ = lambda: (_rebuild_quantity, (float(q.magnitude), str(q.units)))
+    q.__reduce__ = lambda: (_rebuild_quantity, (float(q.magnitude), str(q.units)))  # pyright: ignore
     return q
 
 
@@ -65,7 +65,7 @@ class Quantity:
         """Convert to pint Quantity using ome-types unit registry."""
         obj = cast("OMEQuantity", self)
         symbol = str(obj.unit().getSymbol()).replace(" ", "_")
-        return _make_picklable_quantity(float(obj.value()), symbol)
+        return _make_picklable_quantity(float(obj.value()), symbol)  # pyright: ignore[reportArgumentType]
 
 
 @jpype.JImplementationFor("loci.formats.Modulo")

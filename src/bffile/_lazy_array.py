@@ -209,7 +209,10 @@ class LazyBioArray:
         else:
             # convert channel range to actual names
             if pix.channels:
-                coords["C"] = [pix.channels[ci].name or f"C{ci}" for ci in coords["C"]]
+                coords["C"] = [
+                    pix.channels[ci].name or pix.channels[ci].id or f"C{ci}"
+                    for ci in coords["C"]
+                ]
 
             planes = pix.planes
             t_map = {p.the_t: p.delta_t for p in planes if p.the_t in coords["T"]}

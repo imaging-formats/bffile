@@ -1036,7 +1036,7 @@ class BioFile(Sequence[Series]):
         # and ImageReader (returns active format delegate).
         # Leaf FormatReader subclasses don't have it, so we stop there.
         while hasattr(reader, "getReader"):
-            reader = reader.getReader()
+            reader = reader.getReader()  # pyright: ignore[reportAttributeAccessIssue]
         reader_class = cast("java.lang.Class", reader.getClass())  # type: ignore
         return str(reader_class.getName())
 
