@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     import dask.array
+    import loci.formats.ome
     import numpy as np
     import xarray
 
@@ -39,6 +40,18 @@ class Series:
     def index(self) -> int:
         """Zero-based series index."""
         return self._index
+
+    @property
+    def name(self) -> str:
+        """Image name for this series from the OME metadata store."""
+        reader = self._biofile._ensure_java_reader()
+        try:
+            store = cast("loci.formats.ome.OMEPyramidStore", reader.getMetadataStore())
+            if name := store.getImageName(self._index):
+                return str(name)
+        except Exception:
+            pass
+        return f"Series {self._index}"
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -200,7 +213,12 @@ class Series:
         )
 
     def __repr__(self) -> str:
-        return f"Series(index={self._index}, shape={self.shape}, dtype={self.dtype})"
+        name = self.name
+        name_part = f", name={name!r}" if name else ""
+        return (
+            f"Series(index={self._index}{name_part},"
+            f" shape={self.shape}, dtype={self.dtype})"
+        )
 
     def used_files(self, *, metadata_only: bool = False) -> list[str]:
         """Return list of files needed to open this series.

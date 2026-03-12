@@ -138,6 +138,19 @@ def test_series_read_plane(multiseries_file: Path) -> None:
             np.testing.assert_array_equal(plane, expected)
 
 
+def test_series_name(multiseries_file: Path) -> None:
+    with BioFile(multiseries_file) as bf:
+        for s in bf:
+            assert isinstance(s.name, str)
+            assert len(s.name) > 0
+
+
+def test_series_name_no_meta(multiseries_file: Path) -> None:
+    with BioFile(multiseries_file, meta=False) as bf:
+        assert bf[0].name == "Series 0"
+        assert bf[2].name == "Series 2"
+
+
 def test_series_repr(multiseries_file: Path) -> None:
     with BioFile(multiseries_file) as bf:
         r = repr(bf[0])
@@ -145,6 +158,7 @@ def test_series_repr(multiseries_file: Path) -> None:
         assert "index=" in r
         assert "shape=" in r
         assert "dtype=" in r
+        assert "name=" in r
 
 
 def test_getitem_slice(multiseries_file: Path) -> None:
