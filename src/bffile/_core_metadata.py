@@ -5,11 +5,41 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 
+from ._java_stuff import jtype_to_python
 from ._jimports import jimport
 
 if TYPE_CHECKING:
     import loci.formats
     from typing_extensions import Self
+
+
+@dataclass(slots=True, frozen=True)
+class Modulo:
+    """Python-side representation of loci.formats.Modulo."""
+
+    start: float = 0.0
+    end: float = 0.0
+    step: float = 1.0
+    type: str | None = None
+    type_description: str | None = None
+    unit: str | None = None
+    parent_dimension: str = ""
+    parent_type: str | None = None
+    labels: tuple[str, ...] = ()
+
+    @classmethod
+    def from_java(cls, m: loci.formats.Modulo) -> Modulo:
+        return cls(
+            start=float(m.start),
+            end=float(m.end),
+            step=float(m.step),
+            type=str(m.type) if m.type else None,
+            type_description=str(m.typeDescription) if m.typeDescription else None,
+            unit=str(m.unit) if m.unit else None,
+            parent_dimension=str(m.parentDimension),
+            parent_type=str(m.parentType) if m.parentType else None,
+            labels=tuple(str(lb) for lb in m.labels) if m.labels else (),
+        )
 
 
 class OMEShape(NamedTuple):
@@ -54,7 +84,7 @@ def pixtype2dtype(pixeltype: int, little_endian: bool) -> np.dtype:
     return np.dtype(("<" if little_endian else ">") + fmt2type[pixeltype])
 
 
-@dataclass
+@dataclass(slots=True, frozen=True)
 class CoreMetadata:
     """Core metadata for a single series."""
 
@@ -65,9 +95,9 @@ class CoreMetadata:
     thumb_size_y: int = 0
     bits_per_pixel: int = 0
     image_count: int = 0
-    modulo_z: Any = None
-    modulo_c: Any = None
-    modulo_t: Any = None
+    modulo_z: Modulo = field(default_factory=Modulo)
+    modulo_c: Modulo = field(default_factory=Modulo)
+    modulo_t: Modulo = field(default_factory=Modulo)
     dimension_order: str = ""
     is_order_certain: bool = False
     is_rgb: bool = False
@@ -108,9 +138,9 @@ class CoreMetadata:
             thumb_size_y=meta.thumbSizeY,
             bits_per_pixel=meta.bitsPerPixel,
             image_count=meta.imageCount,
-            modulo_z=meta.moduloZ,
-            modulo_c=meta.moduloC,
-            modulo_t=meta.moduloT,
+            modulo_z=Modulo.from_java(meta.moduloZ),
+            modulo_c=Modulo.from_java(meta.moduloC),
+            modulo_t=Modulo.from_java(meta.moduloT),
             dimension_order=str(meta.dimensionOrder),
             is_order_certain=meta.orderCertain,
             is_rgb=meta.rgb,
@@ -120,6 +150,6 @@ class CoreMetadata:
             is_false_color=meta.falseColor,
             is_metadata_complete=meta.metadataComplete,
             is_thumbnail_series=meta.thumbnail,
-            series_metadata=dict(meta.seriesMetadata),
+            series_metadata=jtype_to_python(meta.seriesMetadata),
             resolution_count=meta.resolutionCount,
         )
