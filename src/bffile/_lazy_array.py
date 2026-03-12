@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from itertools import product
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 import numpy as np
 
@@ -111,6 +111,28 @@ class LazyBioArray:
         # Initialize to full range (root array shows entire dataset)
         self._bounds_tczyxs = cast("BoundsTCZYXS", tuple(slice(0, x) for x in full))
         self._squeezed_tczyxs = (False, False, False, False, False, meta.shape.rgb <= 1)
+        self._shape = self._effective_shape()
+
+    def __getstate__(self) -> dict:
+        """Pickle support — save enough to reconstruct the view."""
+        return {
+            "biofile": self._biofile,
+            "series": self._series,
+            "resolution": self._resolution,
+            "bounds_tczyxs": self._bounds_tczyxs,
+            "squeezed_tczyxs": self._squeezed_tczyxs,
+        }
+
+    def __setstate__(self, state: dict) -> None:
+        """Pickle support — reconstruct from saved state."""
+        self._biofile = biofile = cast("BioFile", state["biofile"])
+        self._series = series = state["series"]
+        self._resolution = resolution = state["resolution"]
+        self._meta = biofile.core_metadata(series, resolution)
+        self._dtype = self._meta.dtype
+        self._full_shape_tczyxs = cast("ShapeTCZYXS", tuple(self._meta.shape))
+        self._bounds_tczyxs = state["bounds_tczyxs"]
+        self._squeezed_tczyxs = state["squeezed_tczyxs"]
         self._shape = self._effective_shape()
 
     @property
@@ -386,6 +408,10 @@ class LazyBioArray:
         )
 
     # ============================ Numpy array protocol ===========================
+
+    def ravel(self, order: Literal["K", "A", "C", "F"] = "C") -> np.ndarray:
+        """Return flattened array (materializes data from disk)."""
+        return np.asarray(self).ravel(order=order)
 
     def __array__(
         self, dtype: np.dtype | None = None, copy: bool | None = None

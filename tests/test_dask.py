@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 from typing import TYPE_CHECKING
 
 import pytest
@@ -78,3 +79,25 @@ def test_to_dask_tile_size_validation(simple_file: Path) -> None:
     with BioFile(simple_file) as bf:
         with pytest.raises(ValueError, match="tile_size must be"):
             bf.to_dask(tile_size=(512,))  # type: ignore[arg-type]
+
+
+def test_dask_array_is_picklable(simple_file: Path) -> None:
+    """Dask arrays from to_dask() must be picklable (needed by distributed)."""
+    dask = pytest.importorskip("dask")
+    with BioFile(simple_file) as bf:
+        darr = bf.to_dask()
+        roundtripped = pickle.loads(pickle.dumps(darr))
+        with dask.config.set(scheduler="synchronous"):
+            assert roundtripped.compute().shape == darr.shape
+
+
+def test_dask_to_zarr(simple_file: Path, tmp_path: Path) -> None:
+    """Dask arrays can be written to zarr (issue #61)."""
+    da = pytest.importorskip("dask.array")
+    zarr = pytest.importorskip("zarr")
+    with BioFile(simple_file) as bf:
+        darr = bf.to_dask()
+        zarr_path = tmp_path / "test.zarr"
+        da.to_zarr(darr, str(zarr_path))
+        stored = zarr.open_array(zarr_path, mode="r")
+        assert stored.shape == darr.shape
