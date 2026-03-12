@@ -132,6 +132,8 @@ def jtype_to_python(obj: Any) -> Any:
         return datetime.fromisoformat(str(obj.getValue())).replace(tzinfo=timezone.utc)
     if isinstance(obj, jpype.JClass("java.util.Map")):
         return {jtype_to_python(k): jtype_to_python(v) for k, v in obj.items()}
+    if isinstance(obj, jpype.JClass("java.util.Collection")):
+        return [jtype_to_python(item) for item in obj]
     # Fallback: convert any remaining Java object to string
     if hasattr(obj, "toString"):
         return str(obj)
