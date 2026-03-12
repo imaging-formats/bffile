@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     import dask.array
     import java.lang
     import xarray as xr
-    from loci.formats import IFormatReader
+    from loci.formats import ChannelFiller, IFormatReader, ImageReader, Memoizer
     from typing_extensions import Self
 
     from bffile._lazy_array import LazyBioArray
@@ -82,6 +82,15 @@ if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):  # pragma: no cover
             f"Using default {MAX_JAVA_ARRAY_SIZE}",
             stacklevel=2,
         )
+
+
+# Readers where close(fileOnly=True) doesn't release all OS file handles.
+# Keyed by Java class name (without "loci.formats.in." prefix),
+# value is the Bio-Formats version where the bug was fixed (None = still broken).
+# See: ImarisHDFReader.close() guards netcdf.close() behind `if (!fileOnly)`.
+_FILEONLY_CLOSE_BROKEN: dict[str, tuple[int, ...] | None] = {
+    "ImarisHDFReader": None,
+}
 
 
 class BioFile(Sequence[Series]):
@@ -174,7 +183,7 @@ class BioFile(Sequence[Series]):
         self._channel_filler = channel_filler
 
         # Reader and finalizer created in open()
-        self._java_reader: IFormatReader | None = None
+        self._java_reader: Memoizer | ChannelFiller | ImageReader | None = None
         # 2D structure: list[series][resolution]
         self._core_meta_list: list[list[CoreMetadata]] | None = None
         self._cached_ome_meta: OME | None = None
@@ -305,16 +314,21 @@ class BioFile(Sequence[Series]):
                 return self  # Already open
 
             if self._suspended:
-                # Fast path: reacquire file handle only
-                try:
-                    self._java_reader.reopenFile()  # type: ignore[union-attr]
-                except Exception:
-                    self.destroy()
-                    raise
+                if self._java_reader is not None:
+                    # Fast path: reacquire file handle only
+                    try:
+                        self._java_reader.reopenFile()
+                    except Exception:
+                        self.destroy()
+                        raise
+                    self._suspended = False
+                    return self
+                # Reader was fully closed (e.g. a format in _FILEONLY_CLOSE_BROKEN)
+                # fall through to full init.
+                # _core_meta_list is preserved so metadata parsing will be skipped
                 self._suspended = False
-                return self
 
-            # Full initialization (first open, or after context-manager exit)
+            # Full initialization (first open, or after full close)
             r = jimport("loci.formats.ImageReader")()
             r.setFlattenedResolutions(False)
 
@@ -407,6 +421,11 @@ class BioFile(Sequence[Series]):
         but keeps all parsed metadata and reader state in memory. A subsequent
         `open()` call will cheaply reacquire the file handle.
 
+        For bioformats readers with *known* file-handle leaks (e.g. HDF5-based formats),
+        this falls back to a full close that destroys the Java reader while still
+        preserving cached Python metadata. Reopening these formats requires
+        full re-initialization via ``setId()``.
+
         Metadata remains accessible via `core_metadata()` and `len()`
         while the file is closed.
 
@@ -414,7 +433,13 @@ class BioFile(Sequence[Series]):
         """
         with self._lock:
             if self._java_reader is not None and not self._suspended:
-                self._java_reader.close(True)  # fileOnly=True
+                if self._needs_full_close():
+                    if self._finalizer is not None:
+                        self._finalizer()
+                        self._finalizer = None
+                    self._java_reader = None
+                else:
+                    self._java_reader.close(True)  # fileOnly=True
                 self._suspended = True
 
     def destroy(self) -> None:
@@ -972,11 +997,30 @@ class BioFile(Sequence[Series]):
 
     # ========================== Internal methods ==========================
 
-    def _ensure_java_reader(self) -> IFormatReader:
+    def _ensure_java_reader(self) -> Memoizer | ChannelFiller | ImageReader:
         """Return the native reader, raising if not open."""
         if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
         return self._java_reader
+
+    def _needs_full_close(self) -> bool:
+        """Whether the current reader has a known fileOnly close bug."""
+        if (reader := self._java_reader) is None:
+            return False
+        # Unwrap through wrappers (Memoizer → ImageReader → delegate)
+        while hasattr(reader, "getReader"):
+            reader = reader.getReader()
+        reader_cls = cast("java.lang.Class", reader.getClass())  # type: ignore
+        class_name = str(reader_cls.getName()).removeprefix("loci.formats.in.")
+        fixed_in = _FILEONLY_CLOSE_BROKEN.get(class_name)
+        if fixed_in is None and class_name in _FILEONLY_CLOSE_BROKEN:
+            return True  # still broken, no upstream fix yet
+        if fixed_in is not None:
+            try:
+                return _ver(self.bioformats_version()) < fixed_in
+            except ValueError:
+                return True  # assume broken if version can't be parsed
+        return False
 
     def _get_core_metadata(self, reader: IFormatReader) -> list[list[CoreMetadata]]:
         """Parse flat CoreMetadata list into 2D structure.
@@ -1399,3 +1443,7 @@ def _resize_thumbnail(img: np.ndarray, *, target_h: int, target_w: int) -> np.nd
         out = np.clip(np.rint(out), info.min, info.max)
 
     return out.astype(img.dtype, copy=False)
+
+
+def _ver(s: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in s.split(".")[:3])
