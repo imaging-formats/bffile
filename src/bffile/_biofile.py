@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     import dask.array
     import java.lang
     import xarray as xr
-    from loci.formats import IFormatReader
+    from loci.formats import ChannelFiller, IFormatReader, ImageReader, Memoizer
     from typing_extensions import Self
 
     from bffile._lazy_array import LazyBioArray
@@ -82,6 +82,23 @@ if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):  # pragma: no cover
             f"Using default {MAX_JAVA_ARRAY_SIZE}",
             stacklevel=2,
         )
+
+
+# Readers where close(fileOnly=True) -> reopenFile() is broken in some way.
+# (keyed by class name without "loci.formats.in.").
+# Value is the Bio-Formats version that fixes it, or None if still broken.
+# For these readers, close() fully destroys the Java reader; open() does a full
+# setId() reinit (metadata parsing is skipped since it's cached on the Python side).
+_BROKEN_REOPEN_READERS: dict[str, tuple[int, ...] | None] = {
+    "AmiraReader": None,  # clears read-critical state unconditionally
+    "BioRadSCNReader": None,  # clears pixelsOffset unconditionally
+    "DicomReader": None,  # leaves currentTileStream open
+    "ImarisHDFReader": None,  # leaves HDF5 handle open
+    "KLBReader": None,  # fails to reopen
+    "SlideBook7Reader": None,  # destroys mDataLoader unconditionally
+    "SVSReader": None,  # fails to reopen
+    "TiffDelegateReader": None,  # fails to reopen
+}
 
 
 class BioFile(Sequence[Series]):
@@ -174,10 +191,11 @@ class BioFile(Sequence[Series]):
         self._channel_filler = channel_filler
 
         # Reader and finalizer created in open()
-        self._java_reader: IFormatReader | None = None
+        self._java_reader: Memoizer | ChannelFiller | ImageReader | None = None
         # 2D structure: list[series][resolution]
         self._core_meta_list: list[list[CoreMetadata]] | None = None
         self._cached_ome_meta: OME | None = None
+        self._cached_ome_xml: str | None = None
         self._finalizer: weakref.finalize | None = None
         self._suspended: bool = False
 
@@ -192,6 +210,7 @@ class BioFile(Sequence[Series]):
             "channel_filler": self._channel_filler,
             "core_meta_list": self._core_meta_list,
             "cached_ome_meta": self._cached_ome_meta,
+            "cached_ome_xml": self._cached_ome_xml,
             "was_open": self._java_reader is not None and not self._suspended,
         }
 
@@ -207,6 +226,7 @@ class BioFile(Sequence[Series]):
         )
         self._core_meta_list = state["core_meta_list"]
         self._cached_ome_meta = state["cached_ome_meta"]
+        self._cached_ome_xml = state.get("cached_ome_xml")
         if state["was_open"]:
             self.open()
 
@@ -305,16 +325,21 @@ class BioFile(Sequence[Series]):
                 return self  # Already open
 
             if self._suspended:
-                # Fast path: reacquire file handle only
-                try:
-                    self._java_reader.reopenFile()  # type: ignore[union-attr]
-                except Exception:
-                    self.destroy()
-                    raise
+                if self._java_reader is not None:
+                    # Fast path: reacquire file handle only
+                    try:
+                        self._java_reader.reopenFile()
+                    except Exception:
+                        self.destroy()
+                        raise
+                    self._suspended = False
+                    return self
+                # Reader was fully closed (e.g. a format in _BROKEN_REOPEN_READERS)
+                # fall through to full init.
+                # _core_meta_list is preserved so metadata parsing will be skipped
                 self._suspended = False
-                return self
 
-            # Full initialization (first open, or after context-manager exit)
+            # Full initialization (first open, or after full close)
             r = jimport("loci.formats.ImageReader")()
             r.setFlattenedResolutions(False)
 
@@ -407,6 +432,11 @@ class BioFile(Sequence[Series]):
         but keeps all parsed metadata and reader state in memory. A subsequent
         `open()` call will cheaply reacquire the file handle.
 
+        For bioformats readers with *known* file-handle leaks (e.g. HDF5-based formats),
+        this falls back to a full close that destroys the Java reader while still
+        preserving cached Python metadata. Reopening these formats requires
+        full re-initialization via ``setId()``.
+
         Metadata remains accessible via `core_metadata()` and `len()`
         while the file is closed.
 
@@ -414,7 +444,13 @@ class BioFile(Sequence[Series]):
         """
         with self._lock:
             if self._java_reader is not None and not self._suspended:
-                self._java_reader.close(True)  # fileOnly=True
+                if self._needs_full_close():
+                    if self._finalizer is not None:
+                        self._finalizer()
+                        self._finalizer = None
+                    self._java_reader = None
+                else:
+                    self._java_reader.close(True)  # fileOnly=True
                 self._suspended = True
 
     def destroy(self) -> None:
@@ -579,6 +615,10 @@ class BioFile(Sequence[Series]):
         if series is None:
             from bffile._zarr._group_store import BFOmeZarrStore
 
+            if rdr_name := self._reader_class_name:
+                if rdr_name.removeprefix("loci.formats.in.") in _BROKEN_REOPEN_READERS:
+                    # Eagerly cache ome_metadata so it survives suspension
+                    _ = self.ome_metadata
             return BFOmeZarrStore(self, tile_size=tile_size)
 
         lazy = self.as_array(series=series, resolution=resolution)
@@ -684,19 +724,24 @@ class BioFile(Sequence[Series]):
     @property
     def ome_xml(self) -> str:
         """Return plain OME XML string."""
-        reader = self._ensure_java_reader()
-        if store := reader.getMetadataStore():
-            try:
-                # get metadatastore can return various types of objects,
-                # only the OME pyramidal metadata has dumpXML method,
-                # (but it's also the most common case here and only useful one)
-                # so just warn on error and return empty string.
-                return str(store.dumpXML())  # pyright: ignore
-            except Exception as e:
-                warnings.warn(
-                    f"Failed to retrieve OME XML: {e}", RuntimeWarning, stacklevel=2
-                )
-        return ""
+        if self._cached_ome_xml is None:
+            reader = self._ensure_java_reader()
+            if store := reader.getMetadataStore():
+                try:
+                    # get metadatastore can return various types of objects,
+                    # only the OME pyramidal metadata has dumpXML method,
+                    # (but it's also the most common case here and only useful one)
+                    # so just warn on error and return empty string.
+                    self._cached_ome_xml = str(store.dumpXML())  # pyright: ignore
+                except Exception as e:
+                    warnings.warn(
+                        f"Failed to retrieve OME XML: {e}",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+            if self._cached_ome_xml is None:
+                self._cached_ome_xml = ""
+        return self._cached_ome_xml
 
     @property
     def ome_metadata(self) -> OME:
@@ -972,11 +1017,42 @@ class BioFile(Sequence[Series]):
 
     # ========================== Internal methods ==========================
 
-    def _ensure_java_reader(self) -> IFormatReader:
+    def _ensure_java_reader(self) -> Memoizer | ChannelFiller | ImageReader:
         """Return the native reader, raising if not open."""
         if self._java_reader is None:
             raise RuntimeError("File not open - call open() first")
         return self._java_reader
+
+    @property
+    def _reader_class_name(self) -> str | None:
+        """Return the class name of the underlying format reader.
+
+        Unwraps through wrappers via getReader() (ReaderWrapper → ImageReader →
+        format delegate). Returns None if the file is not open.
+        """
+        if (reader := self._java_reader) is None:
+            return None
+        # getReader() is defined on ReaderWrapper (returns wrapped reader)
+        # and ImageReader (returns active format delegate).
+        # Leaf FormatReader subclasses don't have it, so we stop there.
+        while hasattr(reader, "getReader"):
+            reader = reader.getReader()  # pyright: ignore[reportAttributeAccessIssue]
+        reader_class = cast("java.lang.Class", reader.getClass())  # type: ignore
+        return str(reader_class.getName())
+
+    def _needs_full_close(self) -> bool:
+        """Whether the current reader has a known fileOnly close bug."""
+        if (class_name := self._reader_class_name) is None:
+            return False
+        class_name = class_name.removeprefix("loci.formats.in.")
+        if class_name not in _BROKEN_REOPEN_READERS:
+            return False
+        if (fixed_in := _BROKEN_REOPEN_READERS[class_name]) is None:
+            return True  # broken, no upstream fix yet
+        try:
+            return _ver(self.bioformats_version()) < fixed_in
+        except ValueError:
+            return False
 
     def _get_core_metadata(self, reader: IFormatReader) -> list[list[CoreMetadata]]:
         """Parse flat CoreMetadata list into 2D structure.
@@ -1399,3 +1475,7 @@ def _resize_thumbnail(img: np.ndarray, *, target_h: int, target_w: int) -> np.nd
         out = np.clip(np.rint(out), info.min, info.max)
 
     return out.astype(img.dtype, copy=False)
+
+
+def _ver(s: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in s.split(".")[:3])

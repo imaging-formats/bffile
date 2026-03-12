@@ -13,7 +13,7 @@ from ._java_stuff import start_jvm
 if TYPE_CHECKING:
     import java.lang
     from loci.common.services import ServiceFactory
-    from loci.formats import FormatTools, ImageReader, Memoizer, Modulo
+    from loci.formats import ChannelFiller, FormatTools, ImageReader, Memoizer, Modulo
     from loci.formats.in_ import DynamicMetadataOptions
     from loci.formats.ome import OMEPyramidStore
     from loci.formats.services import OMEXMLService
@@ -39,6 +39,22 @@ class _Set(Set):
         return f"{self.__class__.__name__}({set(self)})"
 
 
+def _rebuild_quantity(magnitude: float, units: str) -> PlainQuantity:
+    """Reconstruct a pint Quantity using the ome-types registry."""
+    from ome_types.units import ureg
+
+    return ureg.Quantity(magnitude, units)
+
+
+def _make_picklable_quantity(magnitude: float, units: str) -> PlainQuantity:
+    """Create a pint Quantity from ome-types registry with pickle support."""
+    from ome_types.units import ureg
+
+    q = ureg.Quantity(magnitude, units)
+    q.__reduce__ = lambda: (_rebuild_quantity, (float(q.magnitude), str(q.units)))  # pyright: ignore
+    return q
+
+
 @jpype.JImplementationFor("ome.units.quantity.Quantity")
 class Quantity:
     def __repr__(self) -> str:
@@ -46,12 +62,10 @@ class Quantity:
         return f"{obj.value()} {obj.unit().getSymbol()}"
 
     def to_pint(self) -> PlainQuantity:
-        """Convert to pint Quantity."""
-        from ome_types.units import ureg
-
+        """Convert to pint Quantity using ome-types unit registry."""
         obj = cast("OMEQuantity", self)
         symbol = str(obj.unit().getSymbol()).replace(" ", "_")
-        return ureg.Quantity(obj.value(), symbol)
+        return _make_picklable_quantity(float(obj.value()), symbol)  # pyright: ignore[reportArgumentType]
 
 
 @jpype.JImplementationFor("loci.formats.Modulo")
@@ -102,6 +116,10 @@ def jimport(
 def jimport(
     classname: Literal["loci.common.services.ServiceFactory"],
 ) -> type[ServiceFactory]: ...
+@overload
+def jimport(
+    classname: Literal["loci.formats.ChannelFiller"],
+) -> type[ChannelFiller]: ...
 @overload
 def jimport(classname: Literal["loci.formats.ImageReader"]) -> type[ImageReader]: ...
 @overload
