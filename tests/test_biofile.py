@@ -293,10 +293,17 @@ def test_close_releases_file_handle(any_file: Path) -> None:
     bf = BioFile(abspath)
     bf.open()
     held_after_open = abspath in [f.path for f in proc.open_files()]
+    # read a plane to exercise openBytes — some readers acquire
+    # extra file handles here that close(fileOnly=true) must release
+    p1 = bf.read_plane(0, 0, 0, series=0, resolution=-1)
 
     bf.close()
     if held_after_open:
         assert abspath not in [f.path for f in proc.open_files()]
+
+    bf.open()
+    p2 = bf.read_plane(0, 0, 0, series=0, resolution=-1)
+    np.testing.assert_array_equal(p1, p2)
 
     bf.destroy()
 

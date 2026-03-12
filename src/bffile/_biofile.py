@@ -84,12 +84,20 @@ if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):  # pragma: no cover
         )
 
 
-# Readers where close(fileOnly=True) doesn't release all OS file handles.
-# Keyed by Java class name (without "loci.formats.in." prefix),
-# value is the Bio-Formats version where the bug was fixed (None = still broken).
-# See: ImarisHDFReader.close() guards netcdf.close() behind `if (!fileOnly)`.
-_FILEONLY_CLOSE_BROKEN: dict[str, tuple[int, ...] | None] = {
-    "ImarisHDFReader": None,
+# Readers where close(fileOnly=True) -> reopenFile() is broken in some way.
+# (keyed by class name without "loci.formats.in.").
+# Value is the Bio-Formats version that fixes it, or None if still broken.
+# For these readers, close() fully destroys the Java reader; open() does a full
+# setId() reinit (metadata parsing is skipped since it's cached on the Python side).
+_BROKEN_REOPEN_READERS: dict[str, tuple[int, ...] | None] = {
+    "AmiraReader": None,  # clears read-critical state unconditionally
+    "BioRadSCNReader": None,  # clears pixelsOffset unconditionally
+    "DicomReader": None,  # leaves currentTileStream open
+    "ImarisHDFReader": None,  # leaves HDF5 handle open
+    "KLBReader": None,  # fails to reopen
+    "SlideBook7Reader": None,  # destroys mDataLoader unconditionally
+    "SVSReader": None,  # fails to reopen
+    "TiffDelegateReader": None,  # fails to reopen
 }
 
 
@@ -323,7 +331,7 @@ class BioFile(Sequence[Series]):
                         raise
                     self._suspended = False
                     return self
-                # Reader was fully closed (e.g. a format in _FILEONLY_CLOSE_BROKEN)
+                # Reader was fully closed (e.g. a format in _BROKEN_REOPEN_READERS)
                 # fall through to full init.
                 # _core_meta_list is preserved so metadata parsing will be skipped
                 self._suspended = False
@@ -1003,24 +1011,36 @@ class BioFile(Sequence[Series]):
             raise RuntimeError("File not open - call open() first")
         return self._java_reader
 
-    def _needs_full_close(self) -> bool:
-        """Whether the current reader has a known fileOnly close bug."""
+    @property
+    def _reader_class_name(self) -> str | None:
+        """Return the class name of the underlying format reader.
+
+        Unwraps through wrappers via getReader() (ReaderWrapper → ImageReader →
+        format delegate). Returns None if the file is not open.
+        """
         if (reader := self._java_reader) is None:
-            return False
-        # Unwrap through wrappers (Memoizer → ImageReader → delegate)
+            return None
+        # getReader() is defined on ReaderWrapper (returns wrapped reader)
+        # and ImageReader (returns active format delegate).
+        # Leaf FormatReader subclasses don't have it, so we stop there.
         while hasattr(reader, "getReader"):
             reader = reader.getReader()
-        reader_cls = cast("java.lang.Class", reader.getClass())  # type: ignore
-        class_name = str(reader_cls.getName()).removeprefix("loci.formats.in.")
-        fixed_in = _FILEONLY_CLOSE_BROKEN.get(class_name)
-        if fixed_in is None and class_name in _FILEONLY_CLOSE_BROKEN:
-            return True  # still broken, no upstream fix yet
-        if fixed_in is not None:
-            try:
-                return _ver(self.bioformats_version()) < fixed_in
-            except ValueError:
-                return True  # assume broken if version can't be parsed
-        return False
+        reader_class = cast("java.lang.Class", reader.getClass())  # type: ignore
+        return str(reader_class.getName())
+
+    def _needs_full_close(self) -> bool:
+        """Whether the current reader has a known fileOnly close bug."""
+        if (class_name := self._reader_class_name) is None:
+            return False
+        class_name = class_name.removeprefix("loci.formats.in.")
+        if class_name not in _BROKEN_REOPEN_READERS:
+            return False
+        if (fixed_in := _BROKEN_REOPEN_READERS[class_name]) is None:
+            return True  # broken, no upstream fix yet
+        try:
+            return _ver(self.bioformats_version()) < fixed_in
+        except ValueError:
+            return False
 
     def _get_core_metadata(self, reader: IFormatReader) -> list[list[CoreMetadata]]:
         """Parse flat CoreMetadata list into 2D structure.
