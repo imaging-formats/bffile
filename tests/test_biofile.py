@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import pickle
 from typing import TYPE_CHECKING
 
 import numpy as np
+import psutil
 import pytest
 
 from bffile import BioFile, imread
@@ -281,3 +283,38 @@ def test_get_thumbnail_pyramid(pyramid_file: Path) -> None:
         assert isinstance(thumb, np.ndarray)
         assert 0 < thumb.shape[0] <= 128
         assert 0 < thumb.shape[1] <= 128
+
+
+def test_close_releases_file_handle(any_file: Path) -> None:
+    """close() must release OS file handles for all formats."""
+    abspath = str(any_file.resolve())
+    proc = psutil.Process()
+
+    bf = BioFile(abspath)
+    bf.open()
+    held_after_open = abspath in [f.path for f in proc.open_files()]
+
+    bf.close()
+    if held_after_open:
+        assert abspath not in [f.path for f in proc.open_files()]
+
+    bf.destroy()
+
+
+@pytest.mark.parametrize(
+    "file",
+    [
+        "s_1_t_1_c_1_z_1.ome.tiff",  # simple TIFF, no pint quantities
+        "ND2_dims_c2y32x32.nd2",  # ND2 with pint Quantities in series_metadata
+        "toxo.dv",  # DV with reference_frame units (custom pint registry)
+    ],
+)
+def test_pickle(file: str, data_dir: Path) -> None:
+    """BioFile round-trips through pickle, including custom pint units."""
+    with BioFile(data_dir / file) as bf:
+        data = pickle.dumps(bf)
+        restored = pickle.loads(data)
+        with restored:
+            assert len(bf) == len(restored)
+            for orig, rest in zip(bf, restored, strict=True):
+                assert orig.shape == rest.shape
