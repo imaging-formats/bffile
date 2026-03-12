@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from itertools import product
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 import numpy as np
 
@@ -409,7 +409,7 @@ class LazyBioArray:
 
     # ============================ Numpy array protocol ===========================
 
-    def ravel(self, order: str = "C") -> np.ndarray:
+    def ravel(self, order: Literal["K", "A", "C", "F"] = "C") -> np.ndarray:
         """Return flattened array (materializes data from disk)."""
         return np.asarray(self).ravel(order=order)
 
