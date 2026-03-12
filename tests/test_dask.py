@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 from typing import TYPE_CHECKING
 
 import pytest
@@ -82,8 +83,6 @@ def test_to_dask_tile_size_validation(simple_file: Path) -> None:
 
 def test_dask_array_is_picklable(simple_file: Path) -> None:
     """Dask arrays from to_dask() must be picklable (needed by distributed)."""
-    import pickle
-
     dask = pytest.importorskip("dask")
     with BioFile(simple_file) as bf:
         darr = bf.to_dask()
