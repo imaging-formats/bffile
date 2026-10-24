@@ -157,6 +157,7 @@ class BFArrayStore(ReadOnlyStore):
                     },
                 },
             ],
+            "dimension_names": list(self.dimension_names()),
         }
 
         self._array_metadata_bytes = json.dumps(metadata).encode()
