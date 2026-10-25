@@ -120,6 +120,8 @@ ignore = [
 [tool.ruff.format]
 docstring-code-format = true
 skip-magic-trailing-comma = false # default is false
+# keep hand-aligned comment columns in the usage guide's code blocks
+exclude = ["docs/usage.md"]
 
 [tool.pyright]
 include = ["src", "tests"]
