@@ -125,7 +125,7 @@ def ruff_check(output: Path) -> None:
                 "check",
                 *py_files,
                 "--target-version",
-                "py310",
+                "py311",
                 "--quiet",
                 "--fix-only",
                 "--unsafe-fixes",

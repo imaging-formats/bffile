@@ -9,8 +9,9 @@ from ._java_stuff import jtype_to_python
 from ._jimports import jimport
 
 if TYPE_CHECKING:
+    from typing import Self
+
     import loci.formats
-    from typing_extensions import Self
 
 
 @dataclass(slots=True, frozen=True)
