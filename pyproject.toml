@@ -10,6 +10,11 @@ source = "vcs"
 # https://hatch.pypa.io/latest/config/build/#build-targets
 [tool.hatch.build.targets.sdist]
 exclude = ["typings", ".autoenv.zsh", "codecov.yml", "CLAUDE.md"]
+# twine 6.x (pinned by build-and-inspect-python-package@v2) rejects metadata 2.5
+core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.wheel]
+core-metadata-version = "2.4"
 
 # https://peps.python.org/pep-0621/
 [project]
