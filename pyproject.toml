@@ -17,7 +17,7 @@ name = "bffile"
 dynamic = ["version"]
 description = "Yet another Bio-Formats wrapper for python"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "GPL-2.0-or-later"
 license-files = ["LICENSE/*"]
 authors = [{ name = "Talley Lambert", email = "talley.lambert@gmail.com" }]
@@ -25,11 +25,11 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "License :: OSI Approved :: GNU General Public License v2 or later (GPLv2+)",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Typing :: Typed",
 ]
 dependencies = [
@@ -44,7 +44,7 @@ repository = "https://github.com/imaging-formats/bffile"
 
 [project.optional-dependencies]
 dask = ["dask[array]>=2024.11.0"]
-zarr = ["zarr>=3.1.0; python_version>='3.11'"]
+zarr = ["zarr>=3.1.0"]
 xarray = ["xarray>=2024.1.0"]
 
 [dependency-groups]
@@ -85,7 +85,7 @@ constraint-dependencies = ["chardet<6"]
 # https://docs.astral.sh/ruff
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py311"
 src = ["src"]
 exclude = ["typings"]
 fix = true
@@ -120,10 +120,12 @@ ignore = [
 [tool.ruff.format]
 docstring-code-format = true
 skip-magic-trailing-comma = false # default is false
+# keep hand-aligned comment columns in the usage guide's code blocks
+exclude = ["docs/usage.md"]
 
 [tool.pyright]
 include = ["src", "tests"]
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 enableExperimentalFeatures = true
 verboseOutput = true
 venv = ".venv"

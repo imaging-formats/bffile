@@ -53,7 +53,7 @@ from bffile import imread
 
 # Read series0/resolution0 into numpy array
 # series and resolution parameters are optional and default to 0
-data = imread("image.nd2", series=0, resolution=0)  
+data = imread("image.nd2", series=0, resolution=0)
 print(data.shape, data.dtype)  # (T, C, Z, Y, X) array
 ```
 

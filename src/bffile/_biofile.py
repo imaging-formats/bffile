@@ -26,12 +26,12 @@ from ._jimports import jimport
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from types import TracebackType
+    from typing import Self
 
     import dask.array
     import java.lang
     import xarray as xr
     from loci.formats import ChannelFiller, IFormatReader, ImageReader, Memoizer
-    from typing_extensions import Self
 
     from bffile._lazy_array import LazyBioArray
     from bffile._zarr import BFOmeZarrStore

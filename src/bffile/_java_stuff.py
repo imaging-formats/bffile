@@ -4,7 +4,7 @@ import contextlib
 import logging
 import os
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import cache
 from typing import Any
 
@@ -52,6 +52,11 @@ if coord := os.getenv("BIOFORMATS_VERSION", ""):
         )
     else:
         MAVEN_COORDINATE = coord
+        # older Bio-Formats releases depend on artifacts (e.g. woolz:JWlz) that
+        # are only hosted on the OME artifactory
+        scyjava.config.add_repositories(
+            {"ome": "https://artifacts.openmicroscopy.org/artifactory/repo"}
+        )
 
 scyjava.config.endpoints.append(MAVEN_COORDINATE)
 # NB: logback 1.3.x is the last version with Java 8 support!
@@ -129,7 +134,7 @@ def jtype_to_python(obj: Any) -> Any:
         return obj.to_pint()
     if hasattr(obj, "asInstant"):
         # ome.xml.model.primitives.Timestamp -> datetime
-        return datetime.fromisoformat(str(obj.getValue())).replace(tzinfo=timezone.utc)
+        return datetime.fromisoformat(str(obj.getValue())).replace(tzinfo=UTC)
     if isinstance(obj, jpype.JClass("java.util.Map")):
         return {jtype_to_python(k): jtype_to_python(v) for k, v in obj.items()}
     if isinstance(obj, jpype.JClass("java.util.Collection")):
