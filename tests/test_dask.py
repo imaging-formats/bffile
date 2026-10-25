@@ -5,6 +5,7 @@ from __future__ import annotations
 import pickle
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pytest
 
 from bffile import BioFile
@@ -57,12 +58,13 @@ def test_to_dask_with_tiles(simple_file: Path) -> None:
         assert darr.chunks is not None
 
 
-def test_to_dask_tiles_auto(simple_file: Path) -> None:
-    """Test tile-based chunking with auto-computed tile size."""
+def test_to_dask_tiles_auto(data_dir: Path) -> None:
+    """tile_size="auto" chunks Y and X by BioFile._auto_tile_size()."""
     pytest.importorskip("dask")
-    with BioFile(simple_file) as bf:
+    with BioFile(data_dir / "CMU-1-Small-Region.svs") as bf:
         darr = bf.to_dask(tile_size="auto")
-        assert darr.chunks is not None
+        assert (darr.chunks[3][0], darr.chunks[4][0]) == bf._auto_tile_size(0, 0)
+        np.testing.assert_array_equal(darr.compute(), np.asarray(bf.as_array()))
 
 
 def test_to_dask_tile_size_chunks_mutually_exclusive(simple_file: Path) -> None:

@@ -260,7 +260,8 @@ class LazyBioArray:
         tile_size : tuple[int, int] or "auto", optional
             Tile-based chunking for Y,X dimensions (T,C,Z get chunks of 1).
             - (512, 512): Use 512x512 tiles
-            - "auto": Query Bio-Formats optimal tile size
+            - "auto": The reader's optimal tile size, grouped up to 512 pixels
+              a side, or full planes if the reader has no native tiles
             Mutually exclusive with chunks.
         """
         try:
@@ -282,11 +283,9 @@ class LazyBioArray:
         if tile_size is not None:
             # Validate tile_size format
             if tile_size == "auto":
-                # Query Bio-Formats for optimal tile size
-                rdr = self._biofile._ensure_java_reader()
-                rdr.setSeries(self._series)
-                rdr.setResolution(self._resolution)
-                tile_size = (rdr.getOptimalTileHeight(), rdr.getOptimalTileWidth())
+                tile_size = self._biofile._auto_tile_size(
+                    self._series, self._resolution
+                )
             elif not (
                 isinstance(tile_size, tuple)
                 and len(tile_size) == 2

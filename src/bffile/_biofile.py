@@ -84,6 +84,11 @@ if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):  # pragma: no cover
         )
 
 
+# Largest side, in pixels, that ``tile_size="auto"`` groups small tiles up to.
+# Chosen to balance number of requests with over-reading.
+AUTO_TILE_TARGET = 512
+
+
 # Readers where close(fileOnly=True) -> reopenFile() is broken in some way.
 # (keyed by class name without "loci.formats.in.").
 # Value is the Bio-Formats version that fixes it, or None if still broken.
@@ -1246,6 +1251,41 @@ class BioFile(Sequence[Series]):
         max_heap_rows = int(available_heap * 0.8) // row_bytes
 
         return max(1, min(tile_height, max_heap_rows))
+
+    def _auto_tile_size(self, series: int, resolution: int) -> tuple[int, int]:
+        """Return the (Y, X) tile size used by ``tile_size="auto"``.
+
+        Bio-Formats decodes whole native tiles (or strips), so chunks aligned to
+        them avoid decoding a tile more than once. Each side is the reader's
+        optimal tile size, grouped by whole tiles up to `AUTO_TILE_TARGET` and
+        clipped to the image size.
+
+        Readers without native tiles report FormatReader's default, a ~1 MiB
+        full-width strip. Reading any region of such a plane can decode all of it
+        (e.g. compressed ND2), so full planes are used instead.
+        """
+        resolution = _normalize_resolution(
+            resolution, self.core_metadata(series).resolution_count
+        )
+        meta = self.core_metadata(series, resolution)
+        shape = meta.shape
+        with self._lock, self.ensure_open():
+            reader = self._ensure_java_reader()
+            reader.setSeries(series)
+            reader.setResolution(resolution)
+            th = reader.getOptimalTileHeight()
+            tw = reader.getOptimalTileWidth()
+
+        # FormatReader.getOptimalTileHeight/Width defaults
+        default_th = min(2**20 // (shape.x * shape.rgb * meta.dtype.itemsize), shape.y)
+        if (th, tw) == (default_th, shape.x):
+            return shape.y, shape.x
+
+        th, tw = max(1, th), max(1, tw)  # guard against readers reporting 0
+        return (
+            min(th * max(1, AUTO_TILE_TARGET // th), shape.y),
+            min(tw * max(1, AUTO_TILE_TARGET // tw), shape.x),
+        )
 
     def _read_plane_tiled(
         self,

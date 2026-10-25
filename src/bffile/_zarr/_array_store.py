@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from bffile._biofile import _normalize_resolution
 from bffile._zarr._base_store import ReadOnlyStore
 
 if TYPE_CHECKING:
@@ -80,7 +79,7 @@ class BFArrayStore(ReadOnlyStore):
         self._resolution = resolution
         self._meta = biofile.core_metadata(series, resolution)
         if tile_size == "auto":
-            tile_size = auto_tile_size(biofile, series, resolution)
+            tile_size = biofile._auto_tile_size(series, resolution)
         self._tile_size = tile_size
         self._rgb_as_channels = rgb_as_channels
         self._array_metadata_bytes: bytes | None = None  # built lazily
@@ -326,44 +325,3 @@ class BFArrayStore(ReadOnlyStore):
             f"{type(self).__name__}({self._biofile.filename!r}, "
             f"series={self._series}, shape={self._effective_shape})"
         )
-
-
-# Largest side, in pixels, that ``tile_size="auto"`` groups small tiles up to.
-# Chosen to balance number of requests with over-reading.
-AUTO_TILE_TARGET = 512
-
-
-def auto_tile_size(biofile: BioFile, series: int, resolution: int) -> tuple[int, int]:
-    """Return the (Y, X) tile size used by ``tile_size="auto"``.
-
-    Bio-Formats decodes whole native tiles (or strips), so chunks aligned to them
-    avoid decoding a tile more than once. Each side is the reader's optimal tile
-    size, grouped by whole tiles up to `AUTO_TILE_TARGET` and clipped to the image
-    size.
-
-    Readers without native tiles report FormatReader's default, a ~1 MiB
-    full-width strip. Reading any region of such a plane can decode all of it
-    (e.g. compressed ND2), so full planes are used instead.
-    """
-    resolution = _normalize_resolution(
-        resolution, biofile.core_metadata(series).resolution_count
-    )
-    meta = biofile.core_metadata(series, resolution)
-    shape = meta.shape
-    with biofile._lock, biofile.ensure_open():
-        reader = biofile._ensure_java_reader()
-        reader.setSeries(series)
-        reader.setResolution(resolution)
-        th = reader.getOptimalTileHeight()
-        tw = reader.getOptimalTileWidth()
-
-    # FormatReader.getOptimalTileHeight/Width defaults
-    default_th = min(2**20 // (shape.x * shape.rgb * meta.dtype.itemsize), shape.y)
-    if (th, tw) == (default_th, shape.x):
-        return shape.y, shape.x
-
-    th, tw = max(1, th), max(1, tw)  # guard against readers reporting 0
-    return (
-        min(th * max(1, AUTO_TILE_TARGET // th), shape.y),
-        min(tw * max(1, AUTO_TILE_TARGET // tw), shape.x),
-    )
