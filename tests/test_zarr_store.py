@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -58,6 +60,47 @@ def test_tiled_chunks(simple_file: Path) -> None:
         store = arr.to_zarr_store(tile_size=(16, 16))
         zarr_arr = zarr.open_array(store)
         np.testing.assert_array_equal(arr, zarr_arr)
+
+
+@pytest.mark.parametrize("name", ["RGB-8bit.czi", "s_1_t_1_c_2_z_1_RGB.tiff"])
+@pytest.mark.parametrize("tile_size", [None, (20, 20)])
+@pytest.mark.parametrize("rgb_as_channels", [True, False])
+def test_rgb_chunks_hold_all_samples(
+    data_dir: Path,
+    name: str,
+    tile_size: tuple[int, int] | None,
+    rgb_as_channels: bool,
+) -> None:
+    """Each chunk holds all RGB samples of its pixels, read with one openBytes()."""
+    with BioFile(data_dir / name) as bf:
+        lazy = bf.as_array()
+        shape = bf.core_metadata().shape
+        ty, tx = tile_size or (shape.y, shape.x)
+
+        expected = np.asarray(lazy)  # (t, c, z, y, x, rgb)
+        if rgb_as_channels:
+            # (t, c, z, y, x, rgb) -> (t, c * rgb, z, y, x)
+            expected = np.moveaxis(expected, -1, 2).reshape(
+                shape.t, shape.c * shape.rgb, shape.z, shape.y, shape.x
+            )
+            expected_chunks = (1, shape.rgb, 1, ty, tx)
+        else:
+            expected_chunks = (1, 1, 1, ty, tx, shape.rgb)
+
+        store = lazy.to_zarr_store(tile_size=tile_size, rgb_as_channels=rgb_as_channels)
+        zarr_arr = zarr.open_array(store, mode="r")
+        assert zarr_arr.chunks == expected_chunks
+
+        # each _read_plane_direct() call is one Java openBytes() call
+        with patch.object(
+            bf, "_read_plane_direct", wraps=bf._read_plane_direct
+        ) as open_bytes:
+            np.testing.assert_array_equal(zarr_arr[:], expected)
+        n_chunks = math.prod(
+            math.ceil(n / c)
+            for n, c in zip(zarr_arr.shape, zarr_arr.chunks, strict=True)
+        )
+        assert open_bytes.call_count == n_chunks
 
 
 def test_multiseries(multiseries_file: Path) -> None:
