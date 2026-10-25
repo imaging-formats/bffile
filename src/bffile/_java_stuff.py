@@ -52,6 +52,11 @@ if coord := os.getenv("BIOFORMATS_VERSION", ""):
         )
     else:
         MAVEN_COORDINATE = coord
+        # older Bio-Formats releases depend on artifacts (e.g. woolz:JWlz) that
+        # are only hosted on the OME artifactory
+        scyjava.config.add_repositories(
+            {"ome": "https://artifacts.openmicroscopy.org/artifactory/repo"}
+        )
 
 scyjava.config.endpoints.append(MAVEN_COORDINATE)
 # NB: logback 1.3.x is the last version with Java 8 support!
