@@ -36,8 +36,9 @@ class BFArrayStore(ReadOnlyStore):
         If provided, Y and X are chunked into tiles of this size instead of
         full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``. RGB chunks
         hold all samples: ``(1, rgb, 1, tile_y, tile_x)`` with `rgb_as_channels`,
-        otherwise ``(1, 1, 1, tile_y, tile_x, rgb)``. If "auto", the tile size
-        comes from `auto_tile_size`.
+        otherwise ``(1, 1, 1, tile_y, tile_x, rgb)``. If "auto", the tile size will
+        follow the reader's optimal tile size, grouped up to 512 pixels a side,
+        or use full planes if the reader has no native tiles.
     rgb_as_channels : bool, optional
         If True, interleave RGB samples as separate C channels (OME-Zarr convention).
         If False, keep RGB as the last dimension (numpy/imread convention).
@@ -339,18 +340,29 @@ def auto_tile_size(biofile: BioFile, series: int, resolution: int) -> tuple[int,
     avoid decoding a tile more than once. Each side is the reader's optimal tile
     size, grouped by whole tiles up to `AUTO_TILE_TARGET` and clipped to the image
     size.
+
+    Readers without native tiles report FormatReader's default, a ~1 MiB
+    full-width strip. Reading any region of such a plane can decode all of it
+    (e.g. compressed ND2), so full planes are used instead.
     """
     resolution = _normalize_resolution(
         resolution, biofile.core_metadata(series).resolution_count
     )
-    shape = biofile.core_metadata(series, resolution).shape
+    meta = biofile.core_metadata(series, resolution)
+    shape = meta.shape
     with biofile._lock, biofile.ensure_open():
         reader = biofile._ensure_java_reader()
         reader.setSeries(series)
         reader.setResolution(resolution)
-        # FormatReader's default optimal height is 0 for very wide images
-        th = max(1, reader.getOptimalTileHeight())
-        tw = max(1, reader.getOptimalTileWidth())
+        th = reader.getOptimalTileHeight()
+        tw = reader.getOptimalTileWidth()
+
+    # FormatReader.getOptimalTileHeight/Width defaults
+    default_th = min(2**20 // (shape.x * shape.rgb * meta.dtype.itemsize), shape.y)
+    if (th, tw) == (default_th, shape.x):
+        return shape.y, shape.x
+
+    th, tw = max(1, th), max(1, tw)  # guard against readers reporting 0
     return (
         min(th * max(1, AUTO_TILE_TARGET // th), shape.y),
         min(tw * max(1, AUTO_TILE_TARGET // tw), shape.x),

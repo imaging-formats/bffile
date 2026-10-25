@@ -90,9 +90,26 @@ def test_auto_tile_size(data_dir: Path, name: str) -> None:
                     assert c <= n
 
 
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("CMU-1-Small-Region.svs", (480, 480)),  # 240x240 tiles, grouped
+        ("RGB-8bit.czi", (624, 924)),  # default strip -> full plane
+        ("ND2_aryeh_but3_cont200-1.nd2", (1040, 1392)),  # default strip -> full plane
+    ],
+)
+def test_auto_tile_size_values(
+    data_dir: Path, name: str, expected: tuple[int, int]
+) -> None:
+    """Native tiles are grouped; readers reporting the default strip get full
+    planes."""
+    with BioFile(data_dir / name) as bf:
+        assert auto_tile_size(bf, 0, 0) == expected
+
+
 def test_auto_tile_store(data_dir: Path) -> None:
     """tile_size="auto" chunks Y and X by auto_tile_size()."""
-    with BioFile(data_dir / "RGB-8bit.czi") as bf:
+    with BioFile(data_dir / "CMU-1-Small-Region.svs") as bf:
         zarr_arr = zarr.open_array(bf.to_zarr_store(0, tile_size="auto"), mode="r")
         assert zarr_arr.chunks[3:5] == auto_tile_size(bf, 0, 0)
         np.testing.assert_array_equal(zarr_arr[:], np.asarray(bf.as_array()))

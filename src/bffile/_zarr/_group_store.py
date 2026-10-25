@@ -114,7 +114,8 @@ class BFOmeZarrStore(ReadOnlyStore):
     tile_size : tuple[int, int] or "auto", optional
         If provided, Y and X are chunked into tiles of this size. RGB chunks hold
         all samples, e.g. ``(3, tile_y, tile_x)``. If "auto", tiles follow each
-        array's optimal tile size, grouped up to 512 pixels a side.
+        array's optimal tile size, grouped up to 512 pixels a side, or are full
+        planes if the reader has no native tiles.
 
     Examples
     --------

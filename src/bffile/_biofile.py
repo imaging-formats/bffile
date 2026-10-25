@@ -583,7 +583,7 @@ class BioFile(Sequence[Series]):
             If provided, Y and X are chunked into tiles of this size instead of
             full planes. RGB chunks hold all samples (see `BFArrayStore`).
             If "auto", tiles follow the reader's optimal tile size, grouped up to
-            512 pixels a side.
+            512 pixels a side, or are full planes if the reader has no native tiles.
 
         Returns
         -------

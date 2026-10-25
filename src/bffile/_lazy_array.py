@@ -346,7 +346,8 @@ class LazyBioArray:
         tile_size : tuple[int, int] or "auto", optional
             If provided, Y and X are chunked into tiles of this size.
             Default is full-plane chunks ``(1, 1, 1, Y, X)``. If "auto", tiles
-            follow the reader's optimal tile size, grouped up to 512 pixels a side.
+            follow the reader's optimal tile size, grouped up to 512 pixels a side,
+            or are full planes if the reader has no native tiles.
         rgb_as_channels : bool, optional
             If True, interleave RGB samples as separate C channels (OME-Zarr
             convention). If False, keep RGB as the last dimension (numpy/imread
