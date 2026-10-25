@@ -57,6 +57,7 @@ toggle.name = "Switch to light mode"
 inventories = [
     "https://docs.python.org/3/objects.inv",
     "https://ome-types.readthedocs.io/en/latest//objects.inv",
+    "https://cmap-docs.readthedocs.io/en/stable/objects.inv",
 ]
 paths = ["src"]
 
