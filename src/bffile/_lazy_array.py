@@ -332,7 +332,7 @@ class LazyBioArray:
     def to_zarr_store(
         self,
         *,
-        tile_size: tuple[int, int] | None = None,
+        tile_size: tuple[int, int] | Literal["auto"] | None = None,
         rgb_as_channels: bool = False,
         squeeze_singletons: bool = False,
     ) -> BFArrayStore:
@@ -343,9 +343,10 @@ class LazyBioArray:
 
         Parameters
         ----------
-        tile_size : tuple[int, int], optional
+        tile_size : tuple[int, int] or "auto", optional
             If provided, Y and X are chunked into tiles of this size.
-            Default is full-plane chunks ``(1, 1, 1, Y, X)``.
+            Default is full-plane chunks ``(1, 1, 1, Y, X)``. If "auto", tiles
+            follow the reader's optimal tile size, grouped up to 512 pixels a side.
         rgb_as_channels : bool, optional
             If True, interleave RGB samples as separate C channels (OME-Zarr
             convention). If False, keep RGB as the last dimension (numpy/imread

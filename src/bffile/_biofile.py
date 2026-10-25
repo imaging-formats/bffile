@@ -532,7 +532,7 @@ class BioFile(Sequence[Series]):
         self,
         series: Literal[None] = ...,
         *,
-        tile_size: tuple[int, int] | None = ...,
+        tile_size: tuple[int, int] | Literal["auto"] | None = ...,
     ) -> BFOmeZarrStore: ...
     @overload
     def to_zarr_store(
@@ -540,14 +540,14 @@ class BioFile(Sequence[Series]):
         series: int,
         resolution: int = ...,
         *,
-        tile_size: tuple[int, int] | None = ...,
+        tile_size: tuple[int, int] | Literal["auto"] | None = ...,
     ) -> BFArrayStore: ...
     def to_zarr_store(
         self,
         series: int | None = None,
         resolution: int = 0,
         *,
-        tile_size: tuple[int, int] | None = None,
+        tile_size: tuple[int, int] | Literal["auto"] | None = None,
     ) -> BFOmeZarrStore | BFArrayStore:
         """Return a zarr v3 group store containing all series and resolutions.
 
@@ -579,9 +579,11 @@ class BioFile(Sequence[Series]):
         resolution : int, optional
             Resolution level (0 = full resolution), by default 0.  Negative indexing
             supported (e.g., -1 = lowest resolution).
-        tile_size : tuple[int, int], optional
+        tile_size : tuple[int, int] or "auto", optional
             If provided, Y and X are chunked into tiles of this size instead of
             full planes. RGB chunks hold all samples (see `BFArrayStore`).
+            If "auto", tiles follow the reader's optimal tile size, grouped up to
+            512 pixels a side.
 
         Returns
         -------

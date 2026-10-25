@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from enum import Enum, auto
 from itertools import compress
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 
 import zarr
 from ome_types.model import UnitsLength, UnitsTime
@@ -111,9 +111,10 @@ class BFOmeZarrStore(ReadOnlyStore):
     ----------
     biofile : BioFile
         An open BioFile instance. Must remain open for the lifetime of the store.
-    tile_size : tuple[int, int], optional
+    tile_size : tuple[int, int] or "auto", optional
         If provided, Y and X are chunked into tiles of this size. RGB chunks hold
-        all samples, e.g. ``(3, tile_y, tile_x)``.
+        all samples, e.g. ``(3, tile_y, tile_x)``. If "auto", tiles follow each
+        array's optimal tile size, grouped up to 512 pixels a side.
 
     Examples
     --------
@@ -129,11 +130,11 @@ class BFOmeZarrStore(ReadOnlyStore):
         biofile: BioFile,
         /,
         *,
-        tile_size: tuple[int, int] | None = None,
+        tile_size: tuple[int, int] | Literal["auto"] | None = None,
     ) -> None:
         super().__init__(read_only=True)
         self._biofile = biofile
-        self._tile_size = tile_size
+        self._tile_size: tuple[int, int] | Literal["auto"] | None = tile_size
         self._array_stores: dict[tuple[int, int], BFArrayStore] = {}
         self._is_open = True
 
