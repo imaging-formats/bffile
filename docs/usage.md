@@ -72,7 +72,7 @@ bf.destroy()  # full cleanup (or let GC handle it)
 
     `BioFile` does *not* attempt to magically open/close files for you as needed.
     However, some methods like [`as_array()`](#reading-data-with-lazybioarray) and
-    [`to_dask()`](#using-dask-for-lazy-computation) return objects that require the
+    [`to_dask()`](#lazy-computation-with-dask) return objects that require the
     file to be open when indexed or computed. You are responsible for ensuring the
     file is open while using those objects.
 
@@ -320,7 +320,7 @@ for interoperability with their ecosystems:
 
 - [`to_xarray()`][bffile.BioFile.to_xarray] → [`xarray.DataArray`](https://docs.xarray.dev/en/stable/user-guide/data-structures.html#dataarray)
 - [`to_zarr_store()`][bffile.BioFile.to_zarr_store] → [`zarr.abc.store.Store`](https://zarr.readthedocs.io/en/v3.1.2/user-guide/storage.html)
-- [`to_dask()`](#using-dask-for-lazy-computation) → [`dask.array.Array`](https://docs.dask.org/en/stable/array.html)
+- [`to_dask()`][bffile.BioFile.to_dask] → [`dask.array.Array`](https://docs.dask.org/en/stable/array.html)
 
 You will find each of these methods on
 

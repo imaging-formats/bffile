@@ -176,6 +176,7 @@ def test_dimension_metadata(file: Path, expected_axes: list[str], series: int) -
     res0 = series0["0"]
     assert isinstance(res0, zarr.Array)
     assert res0.ndim == len(expected_axes)
+    assert getattr(res0.metadata, "dimension_names", None) == tuple(expected_axes)
     for ax in axes:
         if ax["name"] == "t":
             assert ax["type"] == "time"
