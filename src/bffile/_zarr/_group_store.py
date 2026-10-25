@@ -112,7 +112,8 @@ class BFOmeZarrStore(ReadOnlyStore):
     biofile : BioFile
         An open BioFile instance. Must remain open for the lifetime of the store.
     tile_size : tuple[int, int], optional
-        If provided, Y and X are chunked into tiles of this size.
+        If provided, Y and X are chunked into tiles of this size. RGB chunks hold
+        all samples, e.g. ``(3, tile_y, tile_x)``.
 
     Examples
     --------
@@ -179,12 +180,8 @@ class BFOmeZarrStore(ReadOnlyStore):
 
         Note
         ----
-        RGB images are currently represented as 6D arrays (TCZYXS) which is not
-        strictly NGFF v0.5 compliant (spec recommends 5D with expanded C dimension).
-        A future enhancement would wrap the Bio-Formats reader with ChannelSeparator
-        to automatically split RGB into separate C channels, matching bioformats2raw
-        behavior. For now, RGB images are accessible but may not be fully compliant
-        with all NGFF tools.
+        RGB samples are interleaved into the C dimension (e.g., C=2 with RGB=3
+        becomes C=6), as NGFF v0.5 has no sample dimension.
         """
         meta = self._biofile.core_metadata(series=series)
         ome = self._biofile.ome_metadata

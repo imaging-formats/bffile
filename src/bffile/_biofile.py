@@ -581,7 +581,7 @@ class BioFile(Sequence[Series]):
             supported (e.g., -1 = lowest resolution).
         tile_size : tuple[int, int], optional
             If provided, Y and X are chunked into tiles of this size instead of
-            full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``.
+            full planes. RGB chunks hold all samples (see `BFArrayStore`).
 
         Returns
         -------

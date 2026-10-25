@@ -33,7 +33,9 @@ class BFArrayStore(ReadOnlyStore):
         Resolution level (0 = full resolution), by default 0
     tile_size : tuple[int, int], optional
         If provided, Y and X are chunked into tiles of this size instead of
-        full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``.
+        full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``. RGB chunks
+        hold all samples: ``(1, rgb, 1, tile_y, tile_x)`` with `rgb_as_channels`,
+        otherwise ``(1, 1, 1, tile_y, tile_x, rgb)``.
     rgb_as_channels : bool, optional
         If True, interleave RGB samples as separate C channels (OME-Zarr convention).
         If False, keep RGB as the last dimension (numpy/imread convention).
@@ -130,7 +132,8 @@ class BFArrayStore(ReadOnlyStore):
 
         # Determine chunks based on tile size and dimension filtering
         ty, tx = self._tile_size if self._tile_size else (shape.y, shape.x)
-        chunk_shape = [1, 1, 1, ty, tx]
+        # A chunk holds all RGB samples, which Bio-Formats decodes together
+        chunk_shape = [1, shape.rgb if self._rgb_as_channels else 1, 1, ty, tx]
         if not self._rgb_as_channels and shape.rgb > 1:
             chunk_shape.append(shape.rgb)
         chunk_shape = list(compress(chunk_shape, self._dim_filter))
@@ -173,8 +176,7 @@ class BFArrayStore(ReadOnlyStore):
             ny = 1
             nx = 1
 
-        c_size = shape.c * shape.rgb if self._rgb_as_channels else shape.c
-        sizes = [shape.t, c_size, shape.z, ny, nx]
+        sizes = [shape.t, shape.c, shape.z, ny, nx]
         if not self._rgb_as_channels and shape.rgb > 1:
             sizes.append(1)
         return tuple(compress(sizes, self._dim_filter))
@@ -230,15 +232,8 @@ class BFArrayStore(ReadOnlyStore):
 
     def _read_chunk(self, coords: tuple[int, int, int, int, int]) -> bytes:
         """Read a chunk by its key and return raw bytes."""
-        t, c_eff, z, yi, xi = coords
-
-        # Map effective C back to base (c, rgb_sample) if RGB interleaved as channels
-        if self._rgb_as_channels:
-            c_base, rgb_sample = divmod(c_eff, self._meta.shape.rgb)
-        else:
-            c_base = c_eff
-            rgb_sample = None
-
+        # A chunk holds all RGB samples, so its C index is the Bio-Formats channel
+        t, c, z, yi, xi = coords
         shape = self._meta.shape
 
         # Calculate Y, X slices for this chunk
@@ -254,7 +249,7 @@ class BFArrayStore(ReadOnlyStore):
 
         plane = self._biofile.read_plane(
             t=t,
-            c=c_base,
+            c=c,
             z=z,
             y=slice(y_start, y_stop),
             x=slice(x_start, x_stop),
@@ -262,23 +257,17 @@ class BFArrayStore(ReadOnlyStore):
             resolution=self._resolution,
         )
 
-        # Extract single RGB channel if interleaving RGB as channels
-        if rgb_sample is not None and shape.rgb > 1:
-            plane = plane[..., rgb_sample]
-
         # Pad edge chunks to full tile size (zarr expects full chunk shape)
         if self._tile_size is not None:
             ty, tx = self._tile_size
             actual_h, actual_w = plane.shape[:2]
             if actual_h < ty or actual_w < tx:
-                is_2d = rgb_sample is not None or shape.rgb == 1
-                pad_shape = (ty, tx) if is_2d else (ty, tx, shape.rgb)
-                padded = np.zeros(pad_shape, dtype=self._meta.dtype)
-                if is_2d:
-                    padded[:actual_h, :actual_w] = plane
-                else:
-                    padded[:actual_h, :actual_w, :] = plane
+                padded = np.zeros((ty, tx, *plane.shape[2:]), dtype=self._meta.dtype)
+                padded[:actual_h, :actual_w] = plane
                 plane = padded
+
+        if self._rgb_as_channels and shape.rgb > 1:
+            plane = np.moveaxis(plane, -1, 0)  # (y, x, rgb) -> (rgb, y, x)
 
         return np.ascontiguousarray(plane).tobytes()
 
