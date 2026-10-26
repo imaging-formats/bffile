@@ -82,6 +82,16 @@ if not any(isinstance(h, logging.StreamHandler) for h in LOGGER.handlers):
     LOGGER.addHandler(handler)
 
 
+# logback level names -> Python logging levels
+_JAVA_TO_PY_LEVEL = {
+    "TRACE": logging.DEBUG,
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARN": logging.WARNING,
+    "ERROR": logging.ERROR,
+}
+
+
 def redirect_java_logging(logger: logging.Logger | None = None) -> None:
     """Redirect Java logging to Python logger."""
     _logger = logger or LOGGER
@@ -90,9 +100,9 @@ def redirect_java_logging(logger: logging.Logger | None = None) -> None:
         def doAppend(self, event: Any) -> None:
             # event is an ILoggingEvent
             msg = str(event.getFormattedMessage())
-            level = str(event.getLevel())
+            level = _JAVA_TO_PY_LEVEL.get(str(event.getLevel()), logging.INFO)
             # dispatch to Python logger
-            getattr(logger, level.lower(), _logger.info)(msg)
+            _logger.log(level, msg)
 
         def getName(self) -> str:
             return "PyAppender"
