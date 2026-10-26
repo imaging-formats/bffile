@@ -510,3 +510,4 @@ for reader in BioFile.list_available_readers():
 | `BFF_JAVA_VERSION` | Java version to use (e.g. `11`, `17`, `21`) | `11` |
 | `BFF_JAVA_VENDOR` | Java vendor (e.g. `zulu-jre`, `temurin`, `adoptium`) | `zulu-jre` |
 | `BFF_JAVA_FETCH` | Java fetch behavior: `always`, `never`, or `auto` (See [scyjava docs](https://github.com/scijava/scyjava?tab=readme-ov-file#bootstrap-a-java-installation)). | `always` |
+| `BFF_JPYPE_GC` | Set to `1` to keep JPype's coupling of the Java and Python garbage collectors, which bffile turns off when it starts the JVM because it stalls reads (see [jpype#1197](https://github.com/jpype-project/jpype/issues/1197)). | unset |

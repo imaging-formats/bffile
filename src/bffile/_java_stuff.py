@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import gc
 import logging
 import os
 import warnings
@@ -118,6 +119,32 @@ def start_jvm() -> None:
     """Start the JVM if not already running."""
     scyjava.start_jvm()  # won't repeat if already running
     redirect_java_logging()
+    disable_jpype_gc_bridge()
+
+
+def disable_jpype_gc_bridge() -> None:
+    """Stop JPype from forcing garbage collections across Java and Python.
+
+    JPype runs a full Python `gc.collect()`, holding the GIL, after every Java
+    garbage collection, and calls Java's `System.gc()` as Python's memory grows.
+    Bio-Formats allocates enough that Java collects every read or two, so in a
+    process with many Python objects (napari, a notebook, a server) each read
+    can stall everything for tens to hundreds of milliseconds.
+    See https://github.com/jpype-project/jpype/issues/1197
+
+    Removing JPype's `gc.callbacks` hook disables both directions: without it,
+    JPype never re-arms the Java-to-Python trigger after it first fires. Java
+    and Python still collect garbage on their own.
+
+    Set the BFF_JPYPE_GC environment variable to 1 to keep JPype's behavior.
+    """
+    if os.getenv("BFF_JPYPE_GC", "").lower() in ("1", "true", "yes"):
+        return
+    with contextlib.suppress(ImportError, AttributeError):  # JPype internals changed
+        import _jpype
+
+        # every copy: JPype (as of 1.7) installs the hook twice when it starts
+        gc.callbacks[:] = [cb for cb in gc.callbacks if cb != _jpype._collect]
 
 
 def jtype_to_python(obj: Any) -> Any:
