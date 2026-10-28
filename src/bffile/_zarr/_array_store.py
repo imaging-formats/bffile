@@ -36,8 +36,7 @@ class BFArrayStore(ReadOnlyStore):
         full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``. RGB chunks
         hold all samples: ``(1, rgb, 1, tile_y, tile_x)`` with `rgb_as_channels`,
         otherwise ``(1, 1, 1, tile_y, tile_x, rgb)``. If "auto", the tile size will
-        follow the reader's optimal tile size, grouped up to 512 pixels a side,
-        or use full planes if the reader has no native tiles.
+        follow the reader's optimal tile size, grouped up to 512 pixels a side.
     rgb_as_channels : bool, optional
         If True, interleave RGB samples as separate C channels (OME-Zarr convention).
         If False, keep RGB as the last dimension (numpy/imread convention).

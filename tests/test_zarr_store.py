@@ -91,15 +91,15 @@ def test_auto_tile_size(data_dir: Path, name: str) -> None:
     ("name", "expected"),
     [
         ("CMU-1-Small-Region.svs", (480, 480)),  # 240x240 tiles, grouped
-        ("RGB-8bit.czi", (624, 924)),  # default strip -> full plane
-        ("ND2_aryeh_but3_cont200-1.nd2", (1040, 1392)),  # default strip -> full plane
+        ("RGB-8bit.czi", (378, 924)),  # default ~1 MiB strip, one per band
+        ("ND2_aryeh_but3_cont200-1.nd2", (376, 1392)),  # default strip, one per band
     ],
 )
 def test_auto_tile_size_values(
     data_dir: Path, name: str, expected: tuple[int, int]
 ) -> None:
-    """Native tiles are grouped; readers reporting the default strip get full
-    planes."""
+    """Native tiles are grouped; readers reporting the default strip get bands of
+    whole strips, not full planes."""
     with BioFile(data_dir / name) as bf:
         assert bf._auto_tile_size(0, 0) == expected
 

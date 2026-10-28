@@ -588,7 +588,7 @@ class BioFile(Sequence[Series]):
             If provided, Y and X are chunked into tiles of this size instead of
             full planes. RGB chunks hold all samples (see `BFArrayStore`).
             If "auto", tiles follow the reader's optimal tile size, grouped up to
-            512 pixels a side, or are full planes if the reader has no native tiles.
+            512 pixels a side.
 
         Returns
         -------
@@ -1261,27 +1261,21 @@ class BioFile(Sequence[Series]):
         clipped to the image size.
 
         Readers without native tiles report FormatReader's default, a ~1 MiB
-        full-width strip. Reading any region of such a plane can decode all of it
-        (e.g. compressed ND2), so full planes are used instead.
+        full-width strip, so their chunks are bands of whole strips. This keeps
+        chunks small for any plane size; readers that decode the whole plane for
+        any region (e.g. compressed ND2) decode it once per band.
         """
         resolution = _normalize_resolution(
             resolution, self.core_metadata(series).resolution_count
         )
-        meta = self.core_metadata(series, resolution)
-        shape = meta.shape
+        shape = self.core_metadata(series, resolution).shape
         with self._lock, self.ensure_open():
             reader = self._ensure_java_reader()
             reader.setSeries(series)
             reader.setResolution(resolution)
-            th = reader.getOptimalTileHeight()
-            tw = reader.getOptimalTileWidth()
-
-        # FormatReader.getOptimalTileHeight/Width defaults
-        default_th = min(2**20 // (shape.x * shape.rgb * meta.dtype.itemsize), shape.y)
-        if (th, tw) == (default_th, shape.x):
-            return shape.y, shape.x
-
-        th, tw = max(1, th), max(1, tw)  # guard against readers reporting 0
+            # FormatReader's default optimal height is 0 for very wide images
+            th = max(1, reader.getOptimalTileHeight())
+            tw = max(1, reader.getOptimalTileWidth())
         return (
             min(th * max(1, AUTO_TILE_TARGET // th), shape.y),
             min(tw * max(1, AUTO_TILE_TARGET // tw), shape.x),

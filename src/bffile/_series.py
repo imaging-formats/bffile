@@ -146,7 +146,7 @@ class Series:
             If provided, Y and X are chunked into tiles of this size instead of
             full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``.
             If "auto", tiles follow the reader's optimal tile size, grouped up to
-            512 pixels a side, or are full planes if the reader has no native tiles.
+            512 pixels a side.
         """
         lazy = self.as_array(resolution=resolution)
         return lazy.to_zarr_store(tile_size=tile_size)
