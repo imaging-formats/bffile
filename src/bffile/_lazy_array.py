@@ -260,7 +260,8 @@ class LazyBioArray:
         tile_size : tuple[int, int] or "auto", optional
             Tile-based chunking for Y,X dimensions (T,C,Z get chunks of 1).
             - (512, 512): Use 512x512 tiles
-            - "auto": Query Bio-Formats optimal tile size
+            - "auto": The reader's optimal tile size, grouped up to 512 pixels
+              a side
             Mutually exclusive with chunks.
         """
         try:
@@ -282,11 +283,9 @@ class LazyBioArray:
         if tile_size is not None:
             # Validate tile_size format
             if tile_size == "auto":
-                # Query Bio-Formats for optimal tile size
-                rdr = self._biofile._ensure_java_reader()
-                rdr.setSeries(self._series)
-                rdr.setResolution(self._resolution)
-                tile_size = (rdr.getOptimalTileHeight(), rdr.getOptimalTileWidth())
+                tile_size = self._biofile._auto_tile_size(
+                    self._series, self._resolution
+                )
             elif not (
                 isinstance(tile_size, tuple)
                 and len(tile_size) == 2
@@ -332,7 +331,7 @@ class LazyBioArray:
     def to_zarr_store(
         self,
         *,
-        tile_size: tuple[int, int] | None = None,
+        tile_size: tuple[int, int] | Literal["auto"] | None = None,
         rgb_as_channels: bool = False,
         squeeze_singletons: bool = False,
     ) -> BFArrayStore:
@@ -343,9 +342,10 @@ class LazyBioArray:
 
         Parameters
         ----------
-        tile_size : tuple[int, int], optional
+        tile_size : tuple[int, int] or "auto", optional
             If provided, Y and X are chunked into tiles of this size.
-            Default is full-plane chunks ``(1, 1, 1, Y, X)``.
+            Default is full-plane chunks ``(1, 1, 1, Y, X)``. If "auto", tiles
+            follow the reader's optimal tile size, grouped up to 512 pixels a side.
         rgb_as_channels : bool, optional
             If True, interleave RGB samples as separate C channels (OME-Zarr
             convention). If False, keep RGB as the last dimension (numpy/imread

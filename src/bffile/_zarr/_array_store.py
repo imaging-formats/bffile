@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from itertools import compress, product
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -31,11 +31,12 @@ class BFArrayStore(ReadOnlyStore):
         Series index to virtualize
     resolution : int, optional
         Resolution level (0 = full resolution), by default 0
-    tile_size : tuple[int, int], optional
+    tile_size : tuple[int, int] or "auto", optional
         If provided, Y and X are chunked into tiles of this size instead of
         full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``. RGB chunks
         hold all samples: ``(1, rgb, 1, tile_y, tile_x)`` with `rgb_as_channels`,
-        otherwise ``(1, 1, 1, tile_y, tile_x, rgb)``.
+        otherwise ``(1, 1, 1, tile_y, tile_x, rgb)``. If "auto", the tile size will
+        follow the reader's optimal tile size, grouped up to 512 pixels a side.
     rgb_as_channels : bool, optional
         If True, interleave RGB samples as separate C channels (OME-Zarr convention).
         If False, keep RGB as the last dimension (numpy/imread convention).
@@ -67,7 +68,7 @@ class BFArrayStore(ReadOnlyStore):
         resolution: int = 0,
         /,
         *,
-        tile_size: tuple[int, int] | None = None,
+        tile_size: tuple[int, int] | Literal["auto"] | None = None,
         rgb_as_channels: bool = False,
         squeeze_singletons: bool = False,
     ) -> None:
@@ -76,6 +77,8 @@ class BFArrayStore(ReadOnlyStore):
         self._series = series
         self._resolution = resolution
         self._meta = biofile.core_metadata(series, resolution)
+        if tile_size == "auto":
+            tile_size = biofile._auto_tile_size(series, resolution)
         self._tile_size = tile_size
         self._rgb_as_channels = rgb_as_channels
         self._array_metadata_bytes: bytes | None = None  # built lazily

@@ -12,15 +12,20 @@ import numpy as np
 import pytest
 
 from bffile import BioFile
+from bffile._biofile import AUTO_TILE_TARGET
 from bffile._imread import imread, open_zarr_array
 
 if TYPE_CHECKING:
     import zarr
     from zarr.core.buffer.core import default_buffer_prototype
+
+    from bffile._zarr._array_store import BFArrayStore
 else:
     try:
         import zarr
         from zarr.core.buffer.core import default_buffer_prototype
+
+        from bffile._zarr._array_store import BFArrayStore
     except ImportError:
         pytest.skip(
             "Requires zarr v3 with buffer protocol support", allow_module_level=True
@@ -60,6 +65,60 @@ def test_tiled_chunks(simple_file: Path) -> None:
         store = arr.to_zarr_store(tile_size=(16, 16))
         zarr_arr = zarr.open_array(store)
         np.testing.assert_array_equal(arr, zarr_arr)
+
+
+@pytest.mark.parametrize(
+    "name", ["CMU-1-Small-Region.svs", "RGB-8bit.czi", "s_3_t_1_c_3_z_5.czi"]
+)
+def test_auto_tile_size(data_dir: Path, name: str) -> None:
+    """BioFile._auto_tile_size() groups whole optimal tiles up to AUTO_TILE_TARGET,
+    clipped to the image."""
+    with BioFile(data_dir / name) as bf:
+        reader = bf._ensure_java_reader()
+        for series in range(len(bf)):
+            for res in range(bf.core_metadata(series).resolution_count):
+                chunk = bf._auto_tile_size(series, res)
+                reader.setSeries(series)
+                reader.setResolution(res)
+                tile = (reader.getOptimalTileHeight(), reader.getOptimalTileWidth())
+                shape = bf.core_metadata(series, res).shape
+                for c, t, n in zip(chunk, tile, (shape.y, shape.x), strict=True):
+                    assert c == n or (c % t == 0 and c <= max(t, AUTO_TILE_TARGET))
+                    assert c <= n
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("CMU-1-Small-Region.svs", (480, 480)),  # 240x240 tiles, grouped
+        ("RGB-8bit.czi", (378, 924)),  # default ~1 MiB strip, one per band
+        ("ND2_aryeh_but3_cont200-1.nd2", (376, 1392)),  # default strip, one per band
+    ],
+)
+def test_auto_tile_size_values(
+    data_dir: Path, name: str, expected: tuple[int, int]
+) -> None:
+    """Native tiles are grouped; readers reporting the default strip get bands of
+    whole strips, not full planes."""
+    with BioFile(data_dir / name) as bf:
+        assert bf._auto_tile_size(0, 0) == expected
+
+
+def test_auto_tile_store(data_dir: Path) -> None:
+    """tile_size="auto" chunks Y and X by BioFile._auto_tile_size()."""
+    with BioFile(data_dir / "CMU-1-Small-Region.svs") as bf:
+        zarr_arr = zarr.open_array(bf.to_zarr_store(0, tile_size="auto"), mode="r")
+        assert zarr_arr.chunks[3:5] == bf._auto_tile_size(0, 0)
+        np.testing.assert_array_equal(zarr_arr[:], np.asarray(bf.as_array()))
+
+
+def test_auto_tile_negative_resolution(simple_file: Path) -> None:
+    """tile_size="auto" works with a negative resolution index."""
+    with BioFile(simple_file) as bf:
+        store = BFArrayStore(bf, 0, -1, tile_size="auto")
+        zarr_arr = zarr.open_array(store, mode="r")
+        assert zarr_arr.chunks[3:5] == bf._auto_tile_size(0, 0)
+        np.testing.assert_array_equal(zarr_arr[:], np.asarray(bf.as_array()))
 
 
 @pytest.mark.parametrize("name", ["RGB-8bit.czi", "s_1_t_1_c_2_z_1_RGB.tiff"])

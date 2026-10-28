@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     import dask.array
@@ -131,7 +131,10 @@ class Series:
         return lazy.to_xarray()
 
     def to_zarr_store(
-        self, resolution: int = 0, *, tile_size: tuple[int, int] | None = None
+        self,
+        resolution: int = 0,
+        *,
+        tile_size: tuple[int, int] | Literal["auto"] | None = None,
     ) -> BFArrayStore:
         """Create a Zarr store for this series.
 
@@ -139,9 +142,11 @@ class Series:
         ----------
         resolution : int, optional
             Resolution level (0 = full resolution), by default 0.
-        tile_size : tuple[int, int], optional
+        tile_size : tuple[int, int] or "auto", optional
             If provided, Y and X are chunked into tiles of this size instead of
             full planes. Chunk shape becomes ``(1, 1, 1, tile_y, tile_x)``.
+            If "auto", tiles follow the reader's optimal tile size, grouped up to
+            512 pixels a side.
         """
         lazy = self.as_array(resolution=resolution)
         return lazy.to_zarr_store(tile_size=tile_size)

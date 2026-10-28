@@ -84,6 +84,11 @@ if _max_bytes := os.getenv("BIOFORMATS_MAX_JAVA_BYTES"):  # pragma: no cover
         )
 
 
+# Largest side, in pixels, that ``tile_size="auto"`` groups small tiles up to.
+# Chosen to balance number of requests with over-reading.
+AUTO_TILE_TARGET = 512
+
+
 # Readers where close(fileOnly=True) -> reopenFile() is broken in some way.
 # (keyed by class name without "loci.formats.in.").
 # Value is the Bio-Formats version that fixes it, or None if still broken.
@@ -532,7 +537,7 @@ class BioFile(Sequence[Series]):
         self,
         series: Literal[None] = ...,
         *,
-        tile_size: tuple[int, int] | None = ...,
+        tile_size: tuple[int, int] | Literal["auto"] | None = ...,
     ) -> BFOmeZarrStore: ...
     @overload
     def to_zarr_store(
@@ -540,14 +545,14 @@ class BioFile(Sequence[Series]):
         series: int,
         resolution: int = ...,
         *,
-        tile_size: tuple[int, int] | None = ...,
+        tile_size: tuple[int, int] | Literal["auto"] | None = ...,
     ) -> BFArrayStore: ...
     def to_zarr_store(
         self,
         series: int | None = None,
         resolution: int = 0,
         *,
-        tile_size: tuple[int, int] | None = None,
+        tile_size: tuple[int, int] | Literal["auto"] | None = None,
     ) -> BFOmeZarrStore | BFArrayStore:
         """Return a zarr v3 group store containing all series and resolutions.
 
@@ -579,9 +584,11 @@ class BioFile(Sequence[Series]):
         resolution : int, optional
             Resolution level (0 = full resolution), by default 0.  Negative indexing
             supported (e.g., -1 = lowest resolution).
-        tile_size : tuple[int, int], optional
+        tile_size : tuple[int, int] or "auto", optional
             If provided, Y and X are chunked into tiles of this size instead of
             full planes. RGB chunks hold all samples (see `BFArrayStore`).
+            If "auto", tiles follow the reader's optimal tile size, grouped up to
+            512 pixels a side.
 
         Returns
         -------
@@ -1244,6 +1251,35 @@ class BioFile(Sequence[Series]):
         max_heap_rows = int(available_heap * 0.8) // row_bytes
 
         return max(1, min(tile_height, max_heap_rows))
+
+    def _auto_tile_size(self, series: int, resolution: int) -> tuple[int, int]:
+        """Return the (Y, X) tile size used by ``tile_size="auto"``.
+
+        Bio-Formats decodes whole native tiles (or strips), so chunks aligned to
+        them avoid decoding a tile more than once. Each side is the reader's
+        optimal tile size, grouped by whole tiles up to `AUTO_TILE_TARGET` and
+        clipped to the image size.
+
+        Readers without native tiles report FormatReader's default, a ~1 MiB
+        full-width strip, so their chunks are bands of whole strips. This keeps
+        chunks small for any plane size; readers that decode the whole plane for
+        any region (e.g. compressed ND2) decode it once per band.
+        """
+        resolution = _normalize_resolution(
+            resolution, self.core_metadata(series).resolution_count
+        )
+        shape = self.core_metadata(series, resolution).shape
+        with self._lock, self.ensure_open():
+            reader = self._ensure_java_reader()
+            reader.setSeries(series)
+            reader.setResolution(resolution)
+            # FormatReader's default optimal height is 0 for very wide images
+            th = max(1, reader.getOptimalTileHeight())
+            tw = max(1, reader.getOptimalTileWidth())
+        return (
+            min(th * max(1, AUTO_TILE_TARGET // th), shape.y),
+            min(tw * max(1, AUTO_TILE_TARGET // tw), shape.x),
+        )
 
     def _read_plane_tiled(
         self,
