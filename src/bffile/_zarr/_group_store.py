@@ -36,6 +36,9 @@ _DIMENSION_TYPES = {
     "r": "channel",  # RGB (unused: group store uses rgb_as_channels=True)
 }
 
+# (omero color, label suffix) for each interleaved RGB(A) sample
+_RGB_SAMPLES = [("FF0000", "R"), ("00FF00", "G"), ("0000FF", "B"), ("FFFFFF", "A")]
+
 # OME to NGFF unit mappings (only NGFF-whitelisted units)
 _OME_TO_NGFF_TIME: dict[UnitsTime, str] = {
     UnitsTime.YOTTASECOND: "yottasecond",
@@ -187,24 +190,59 @@ class BFOmeZarrStore(ReadOnlyStore):
         ome = self._biofile.ome_metadata
         datasets = self._build_datasets(ome, series, meta.resolution_count)
 
+        ome_attrs: dict[str, Any] = {
+            "version": "0.5",
+            "multiscales": [
+                {
+                    "version": "0.5",
+                    "name": f"Series {series}",
+                    "axes": list(self._build_axes(ome, series)),
+                    "datasets": datasets,
+                }
+            ],
+        }
+        # NGFF requires an omero window but OME-XML has no display range, so only
+        # write omero where the full dtype range is a usable window (uint8, 1-bit).
+        if (hi := {"uint8": 255, "bool": 1}.get(meta.dtype.name)) is not None:
+            channels = self._build_omero_channels(ome, series, hi)
+            ome_attrs["omero"] = {"channels": channels}
+
         metadata: dict[str, Any] = {
             "zarr_format": 3,
             "node_type": "group",
-            "attributes": {
-                "ome": {
-                    "version": "0.5",
-                    "multiscales": [
-                        {
-                            "version": "0.5",
-                            "name": f"Series {series}",
-                            "axes": list(self._build_axes(ome, series)),
-                            "datasets": datasets,
-                        }
-                    ],
-                }
-            },
+            "attributes": {"ome": ome_attrs},
         }
         return json.dumps(metadata).encode()
+
+    def _build_omero_channels(
+        self, ome: OME, series: int, hi: int
+    ) -> list[dict[str, Any]]:
+        """Build omero channels from OME Channels; RGB samples expand to R/G/B."""
+        meta = self._biofile.core_metadata(series=series)
+        channels = ome.images[series].pixels.channels
+        window = {"min": 0, "max": hi, "start": 0, "end": hi}
+
+        labels_colors: list[tuple[str, str]] = []
+        for ci in range(meta.shape.c):
+            ch = channels[ci] if ci < len(channels) else None
+            label = (ch.name or ch.id) if ch is not None else f"C{ci}"
+            if meta.shape.rgb > 1:
+                for si in range(meta.shape.rgb):
+                    color, suffix = (
+                        _RGB_SAMPLES[si]
+                        if si < len(_RGB_SAMPLES)
+                        else ("FFFFFF", str(si))
+                    )
+                    labels_colors.append((f"{label} {suffix}", color))
+            else:
+                # ome_types defaults an unset Channel color to white
+                r, g, b = ch.color.as_rgb_tuple(alpha=False) if ch else (255, 255, 255)
+                labels_colors.append((label, f"{r:02X}{g:02X}{b:02X}"))
+
+        return [
+            {"label": label, "color": color, "window": window, "active": True}
+            for label, color in labels_colors
+        ]
 
     def _build_axes(self, ome: OME, series: int) -> Iterator[dict[str, str]]:
         """Build axes list from metadata.
