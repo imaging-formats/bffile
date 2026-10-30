@@ -186,6 +186,53 @@ def test_dimension_metadata(file: Path, expected_axes: list[str], series: int) -
             assert ax["type"] == "space"
 
 
+def _omero(file: Path) -> dict | None:
+    """Return the omero metadata of series 0, or None if absent."""
+    series0 = open_ome_zarr_group(file)["0"]
+    return cast("dict", series0.attrs["ome"]).get("omero")
+
+
+@pytest.mark.parametrize(
+    "file, expected",
+    [
+        # 2 channels x RGB interleaved into C: one entry per sample
+        (
+            TEST_DATA / "s_1_t_1_c_2_z_1_RGB.tiff",
+            [
+                (f"Channel:0:{c} {s}", color)
+                for c in (0, 1)
+                for s, color in (("R", "FF0000"), ("G", "00FF00"), ("B", "0000FF"))
+            ],
+        ),
+        # names from OME Channel elements; no colors: default to white
+        (
+            TEST_DATA / "ND2_dims_rgb.nd2",
+            [("Blue", "FFFFFF"), ("Green", "FFFFFF"), ("Red", "FFFFFF")],
+        ),
+    ],
+    ids=lambda val: getattr(val, "name", ""),
+)
+def test_omero_uint8(file: Path, expected: list[tuple[str, str]]) -> None:
+    """uint8 images get omero channels with a 0-255 window."""
+    omero = _omero(file)
+    assert omero is not None
+    window = {"min": 0, "max": 255, "start": 0, "end": 255}
+    assert omero["channels"] == [
+        {"label": label, "color": color, "window": window, "active": True}
+        for label, color in expected
+    ]
+
+
+@pytest.mark.parametrize(
+    "file",
+    [TEST_DATA / "toxo.dv", TEST_DATA / "image.mrc"],  # uint16, float32
+    ids=lambda val: val.name,
+)
+def test_omero_omitted_without_window(file: Path) -> None:
+    """No omero block when there is no unambiguous display window."""
+    assert _omero(file) is None
+
+
 def test_multi_resolution(pyramid_file: Path) -> None:
     """Test multi-resolution support (NGFF v0.5)."""
     group = open_ome_zarr_group(pyramid_file)
